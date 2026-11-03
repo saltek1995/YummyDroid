@@ -468,7 +468,18 @@ internal val ALLOHA_SESSION_CAPTURE_SCRIPT = """
             // The scoped /stat listener is registered only after its asynchronous capability probes.
             var statReady = Array.isArray(player && player.eventListeners) && player.eventListeners.some(function(entry) {
                 if (!entry || entry.type !== 'play' || entry.element !== container || typeof entry.callback !== 'function') return false;
-                try { return /["']\/stat["']/.test(Function.prototype.toString.call(entry.callback)); }
+                try {
+                    var callback = Function.prototype.toString.call(entry.callback);
+                    if (/["']\/stat["']/.test(callback)) return true;
+                    // Recent bundles decode the endpoint at runtime. Identify the provider's
+                    // same capability-gated form builder, not an arbitrary early play listener.
+                    return /["']id["']\s*:\s*fileList\s*\[/.test(callback) &&
+                        /["']token["']\s*:\s*userParam\s*\[/.test(callback) &&
+                        /["']domain["']\s*:\s*userParam\s*\[/.test(callback) &&
+                        /["']url["']\s*:\s*location\s*(?:\[|\.)/.test(callback) &&
+                        /["']ab["']\s*:\s*adBlockStatus\b/.test(callback) &&
+                        /["']info["']\s*:/.test(callback);
+                }
                 catch (_) { return false; }
             });
             var state = {ready:!!(player && player.ready === true), video:media instanceof HTMLVideoElement && !!(container && container.contains(media)),

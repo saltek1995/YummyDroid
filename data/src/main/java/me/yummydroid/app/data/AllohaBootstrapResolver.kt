@@ -7,6 +7,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceError
 import android.webkit.WebResourceResponse
@@ -73,6 +74,7 @@ private class Bootstrap(
     @Volatile private var browserLanguage: String? = null
     private var metadataCapture: PlayerMetadataCapture? = null
     private var cleaned = false
+    private var rendererGone = false
     private val stages = linkedMapOf<String, Long>()
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -86,6 +88,12 @@ private class Bootstrap(
         CookieManager.getInstance().setAcceptThirdPartyCookies(view, true)
         view.addJavascriptInterface(Bridge(), "YummyBootstrapBridge")
         view.webViewClient = object : WebViewClient() {
+            override fun onRenderProcessGone(v: WebView?, detail: RenderProcessGoneDetail?): Boolean {
+                rendererGone = true
+                finish(Result.failure(IOException("Alloha browser renderer stopped")))
+                return true
+            }
+
             override fun shouldInterceptRequest(v: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                 if (termination.isTerminated || request == null) return emptyResponse()
                 val url = request.url.toString()
@@ -359,7 +367,12 @@ private class Bootstrap(
         if (cleaned) return
         cleaned = true
         handler.removeCallbacksAndMessages(null)
-        view.stopLoading(); view.removeJavascriptInterface("YummyBootstrapBridge"); view.destroy()
+        if (!rendererGone) {
+            runCatching { view.stopLoading() }
+            runCatching { view.removeJavascriptInterface("YummyBootstrapBridge") }
+        }
+        runCatching { view.removeAllViews() }
+        runCatching { view.destroy() }
     }
 
     private fun response(type: String, body: String) = WebResourceResponse(type, "UTF-8", 200, "OK",

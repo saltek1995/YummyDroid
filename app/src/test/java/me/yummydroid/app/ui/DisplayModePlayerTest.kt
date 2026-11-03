@@ -17,6 +17,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
@@ -48,6 +49,7 @@ class DisplayModePlayerTest {
     private lateinit var raw: ProbePlayer
     private lateinit var scope: CoroutineScope
     private lateinit var player: DisplayModePlayer
+    private val coroutineFailures = java.util.concurrent.CopyOnWriteArrayList<Throwable>()
     private val switches = mutableListOf<CompletableDeferred<Unit>>()
     private var enabled = true
     private lateinit var matcher: suspend (Player) -> Unit
@@ -55,7 +57,7 @@ class DisplayModePlayerTest {
     @Before fun setUp() {
         local = ExoPlayer.Builder(RuntimeEnvironment.getApplication()).build()
         raw = ProbePlayer(local)
-        scope = CoroutineScope(Dispatchers.Main.immediate + Job())
+        scope = CoroutineScope(Dispatchers.Main.immediate + Job() + CoroutineExceptionHandler { _, failure -> coroutineFailures += failure })
         matcher = {
             CompletableDeferred<Unit>().also(switches::add).await()
         }
@@ -65,6 +67,61 @@ class DisplayModePlayerTest {
     @After fun tearDown() {
         scope.cancel()
         player.release()
+        assertTrue("Uncaught coroutine failures: $coroutineFailures", coroutineFailures.isEmpty())
+    }
+
+    @Test fun metadataWaitCancelledFromBackgroundRemovesListenerOnPlayerThread() {
+        load("metadata")
+        raw.ready() // No frame-rate metadata: awaitVideoDisplayInfo must keep its listener.
+        assertBackgroundCancellationCleansListener { raw.awaitVideoDisplayInfo() }
+    }
+
+    @Test fun readinessWaitCancelledFromBackgroundRemovesListenerOnPlayerThread() {
+        load("readiness")
+        raw.prepare()
+        assertBackgroundCancellationCleansListener { raw.awaitNativePlaybackReadyOrTerminal() }
+    }
+
+    @Test fun firstFrameWaitCancelledFromBackgroundRemovesListenerOnPlayerThread() {
+        enabled = false
+        raw.videoFormat = Format.Builder().setSampleMimeType("video/avc")
+            .setWidth(1920).setHeight(1080).setFrameRate(24f).build()
+        load("one")
+        raw.ready()
+        flush()
+        val pending = raw.listenerCount
+        Thread { scope.cancel() }.apply { start(); join() }
+        flush()
+        assertEquals(pending - 1, raw.listenerCount)
+        assertTrue(coroutineFailures.toString(), coroutineFailures.isEmpty())
+        assertFalse(raw.playWhenReady)
+    }
+
+    @Test fun missingDisplayMetadataTimesOutAndRemovesItsListener() {
+        load("metadata-timeout")
+        raw.ready()
+        val before = raw.listenerCount
+        var completed = false
+        var info: VideoDisplayInfo? = null
+        scope.launch { info = raw.awaitVideoDisplayInfo(); completed = true }
+        flush()
+        assertFalse(completed)
+        shadowOf(Looper.getMainLooper()).idleFor(1_000L, TimeUnit.MILLISECONDS)
+        assertTrue(completed)
+        assertNull(info)
+        assertEquals(before, raw.listenerCount)
+    }
+
+    private fun assertBackgroundCancellationCleansListener(wait: suspend () -> Unit) {
+        val failures = java.util.concurrent.CopyOnWriteArrayList<Throwable>()
+        val before = raw.listenerCount
+        val pending = scope.launch(CoroutineExceptionHandler { _, failure -> failures += failure }) { wait() }
+        flush()
+        assertEquals(before + 1, raw.listenerCount)
+        Thread { pending.cancel() }.apply { start(); join() }
+        flush()
+        assertTrue("Cancellation must not escape into an uncaught handler: $failures", failures.isEmpty())
+        assertEquals(before, raw.listenerCount)
     }
 
     @Test fun autoplayAndFirstFrameWaitUntilTheDisplayHandoffFinishes() {
@@ -512,11 +569,15 @@ class DisplayModePlayerTest {
     /** The playlist is real; prepare and playback are synthetic and never open a media source. */
     private class ProbePlayer(local: Player) : ForwardingPlayer(local) {
         private val listeners = linkedSetOf<Player.Listener>()
+        val listenerCount get() = listeners.size
         private var state = STATE_IDLE
         private var intent = false
         var videoFormat: Format? = null
         override fun addListener(listener: Player.Listener) { listeners += listener }
-        override fun removeListener(listener: Player.Listener) { listeners -= listener }
+        override fun removeListener(listener: Player.Listener) {
+            check(Looper.myLooper() == applicationLooper) { "Player is accessed on the wrong thread" }
+            listeners -= listener
+        }
         override fun getPlaybackState() = state
         override fun getPlayWhenReady() = intent
         override fun isPlaying() = state == STATE_READY && intent

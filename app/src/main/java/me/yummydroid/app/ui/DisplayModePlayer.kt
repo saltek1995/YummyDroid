@@ -18,6 +18,7 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -155,7 +156,7 @@ internal class DisplayModePlayer(
             override fun onEvents(player: Player, events: Player.Events) = check()
         }
         localPlayer.addListener(listener)
-        continuation.invokeOnCancellation { localPlayer.removeListener(listener) }
+        continuation.removePlayerListenerOnCancellation(localPlayer, listener)
         check()
     }
 
@@ -275,9 +276,19 @@ internal suspend fun Player.awaitVideoDisplayInfo(): VideoDisplayInfo? {
                 override fun onEvents(player: Player, events: Player.Events) = check()
             }
             addListener(listener)
-            continuation.invokeOnCancellation { removeListener(listener) }
+            continuation.removePlayerListenerOnCancellation(this@awaitVideoDisplayInfo, listener)
             check()
         }
+    }
+}
+
+/** Timeout cancellation may run on DefaultExecutor, outside the player's application looper. */
+internal fun CancellableContinuation<*>.removePlayerListenerOnCancellation(player: Player, listener: Player.Listener) {
+    // Capture the looper while registering on the player thread, before cancellation can run.
+    val handler = Handler(player.applicationLooper)
+    invokeOnCancellation {
+        if (Looper.myLooper() == handler.looper) player.removeListener(listener)
+        else handler.post { player.removeListener(listener) }
     }
 }
 

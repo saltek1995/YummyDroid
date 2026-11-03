@@ -8,6 +8,7 @@ import android.os.SystemClock
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -93,6 +94,7 @@ private class WebViewCaptureSession(
     private val discoveryTimings = linkedMapOf<String, Long>()
     private val handler = Handler(Looper.getMainLooper())
     private val webView = WebView(context)
+    private var rendererGone = false
     private val capturedRequestHeaders = ConcurrentHashMap<String, Map<String, String>>()
     private val capturedSubtitleTracks = linkedSetOf<ResolvedSubtitleTrack>()
     private val knownSubtitleUrls = ConcurrentHashMap.newKeySet<String>()
@@ -292,6 +294,12 @@ private class WebViewCaptureSession(
 
     private fun installRequestInterceptor() {
         webView.webViewClient = object : WebViewClient() {
+            override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
+                rendererGone = true
+                finish(Result.failure(IOException("Player browser renderer stopped")))
+                return true
+            }
+
             override fun shouldInterceptRequest(
                 view: WebView?,
                 request: WebResourceRequest?,
@@ -336,6 +344,11 @@ private class WebViewCaptureSession(
             emptyInterceptedResponse()
         } catch (failure: SourceHttpRestricted) {
             handler.post { finish(Result.failure(failure)) }
+            emptyInterceptedResponse()
+        } catch (failure: Exception) {
+            // WebView callbacks run outside the resolving coroutine. An invalid provider
+            // response must fail that resolution rather than escape on a browser thread.
+            handler.post { finish(Result.failure(IOException("Could not read player response", failure))) }
             emptyInterceptedResponse()
         }
     }
@@ -523,6 +536,7 @@ private class WebViewCaptureSession(
     }
 
     private fun HttpResponseSnapshot.toWebResourceResponse(): WebResourceResponse {
+        if (code in 300..399) throw IOException("Player returned unsupported HTTP $code")
         return WebResourceResponse(
             mimeType ?: urlMimeTypeFallback(),
             encoding,
@@ -739,8 +753,10 @@ private class WebViewCaptureSession(
         playerStateScriptHandler = null
         runCatching { preferredQualityScriptHandler?.remove() }
         preferredQualityScriptHandler = null
-        runCatching { webView.stopLoading() }
-        runCatching { webView.removeJavascriptInterface(STREAM_WEBVIEW_DISCOVERY_BRIDGE_NAME) }
+        if (!rendererGone) {
+            runCatching { webView.stopLoading() }
+            runCatching { webView.removeJavascriptInterface(STREAM_WEBVIEW_DISCOVERY_BRIDGE_NAME) }
+        }
         runCatching { webView.removeAllViews() }
         runCatching { webView.destroy() }
     }

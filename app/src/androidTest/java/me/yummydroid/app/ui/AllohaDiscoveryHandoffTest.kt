@@ -23,8 +23,13 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class AllohaDiscoveryHandoffTest {
     @Test
+    fun productionCaptureWaitsForSubmittedFormsBeforeTransferringView() = verifyHandoff(false)
+
+    @Test
+    fun obfuscatedStatEndpointWaitsForCapabilitiesAndSubmittedForms() = verifyHandoff(true)
+
     @SuppressLint("SetJavaScriptEnabled")
-    fun productionCaptureWaitsForSubmittedFormsBeforeTransferringView() {
+    private fun verifyHandoff(obfuscated: Boolean) {
         val bridge = Bridge()
         val releaseEvents = CountDownLatch(1)
         val eventsStarted = CountDownLatch(1)
@@ -52,7 +57,7 @@ class AllohaDiscoveryHandoffTest {
                             return WebResourceResponse("text/plain", "UTF-8", 410, "Gone", emptyMap(), ByteArrayInputStream(ByteArray(0)))
                         }
                         return when (url) {
-                            provider -> response("text/html", fixture())
+                            provider -> response("text/html", fixture(obfuscated))
                             // WebView's empty auxiliary document and this fixture parent's icon only.
                             "data:text/html;charset=utf-8;base64," -> response("text/html", "")
                             "$parent/favicon.ico" -> response("image/x-icon", "")
@@ -115,7 +120,8 @@ class AllohaDiscoveryHandoffTest {
         ).invoke(null, view, script, setOf(origin))
     }
 
-    private fun fixture() = """
+    private fun fixture(obfuscated: Boolean): String {
+        val html = """
         <!doctype html><script src="/js/rmp-vast.min.js?v=2.6"></script><div id="controls"><video id="media"></video>
         <button class="allplay__control--overlaid" data-allplay="play">Play</button>
         <button class="allplay__control--overlaid" data-allplay="play-large-ads">Advertisement</button></div><script>
@@ -161,6 +167,27 @@ class AllohaDiscoveryHandoffTest {
         });
         </script>
     """.trimIndent()
+        if (!obfuscated) return html
+        return html.replace("function submitInitialStat() {", """
+            var fileList = {active:{id:'file'}};
+            var userParam = {token:'http-token',domain:'site.test'};
+            var adBlockStatus = false;
+            var capabilitiesReady = false;
+            function endpoint() { return String.fromCharCode(47,115,116,97,116); }
+            function submitInitialStat() {
+                var form = {'id':fileList['active']['id'],'token':userParam['token'],'domain':userParam['domain'],
+                    'url':location.href,'type':'mgpo','ab':adBlockStatus,'info':{wasm:true}};
+        """.trimIndent())
+            .replace("return fetch('/stat',", "return fetch(endpoint(),")
+            .replace("if (!firstClick)", "if (!capabilitiesReady) throw Error('started before capability listener installation'); if (!firstClick)")
+            .replace("player.eventListeners = [{type:'play',element:player.elements.container,callback:submitInitialStat}];", """
+                player.eventListeners = [{type:'play',element:player.elements.container,callback:function() { /* unrelated core listener */ }}];
+                setTimeout(function() {
+                    capabilitiesReady = true;
+                    player.eventListeners.push({type:'play',element:player.elements.container,callback:submitInitialStat});
+                }, 750);
+            """.trimIndent())
+    }
 
     private fun response(type: String, body: String) = WebResourceResponse(
         type, "UTF-8", 200, "OK", mapOf("Cache-Control" to "no-store"), ByteArrayInputStream(body.toByteArray()),

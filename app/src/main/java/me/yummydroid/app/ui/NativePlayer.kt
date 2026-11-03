@@ -1420,13 +1420,7 @@ internal suspend fun Player.awaitNativePlaybackReadyOrTerminal() {
             }
         }
         addListener(listener)
-        continuation.invokeOnCancellation {
-            if (Looper.myLooper() == applicationLooper) {
-                removeListener(listener)
-            } else {
-                Handler(applicationLooper).post { removeListener(listener) }
-            }
-        }
+        continuation.removePlayerListenerOnCancellation(this@awaitNativePlaybackReadyOrTerminal, listener)
         completeIfReady()
     }
 }

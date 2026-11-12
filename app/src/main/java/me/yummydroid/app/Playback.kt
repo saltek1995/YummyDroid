@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -291,6 +292,25 @@ internal class PlaybackSessionCoordinator(
         }
     }
 
+    /** Explicit UI commands target the pending selection; old media observations stay separate. */
+    fun updatePendingPlaybackIntent(video: VideoVariant, playWhenReady: Boolean) {
+        updateState { state ->
+            val route = state.route as? AppRoute.Player ?: return@updateState state
+            if (state.playerStream is LoadState.Ready || route.video != video || route.playWhenReady == playWhenReady) return@updateState state
+            if (pendingRecoveryTarget?.let { !route.matches(it) } == true) return@updateState state
+            state.copy(route = route.copy(playWhenReady = playWhenReady))
+        }
+    }
+
+    fun updatePendingPlaybackPosition(video: VideoVariant, positionMs: Long) {
+        updateState { state ->
+            val route = state.route as? AppRoute.Player ?: return@updateState state
+            if (state.playerStream is LoadState.Ready || route.video != video) return@updateState state
+            if (pendingRecoveryTarget?.let { !route.matches(it) } == true) return@updateState state
+            state.copy(route = route.copy(startPositionMs = positionMs.coerceAtLeast(0L)))
+        }
+    }
+
     private fun currentRecoveryRoute(request: PlaybackSessionRequest): AppRoute.Player? {
         val route = currentState().route as? AppRoute.Player ?: return null
         return route.takeIf { it.video.hasSamePlaybackSourceAs(request.video) &&
@@ -545,6 +565,7 @@ private fun YummyDroidUiState.withStartedPlayback(request: PlaybackSessionReques
         ),
         navigationBackStack = navigationStackAfterOptionalPush(route !is AppRoute.Player),
         playerStream = LoadState.Loading,
+        nextTitleSuggestion = null,
         playbackMetadataLoading = false,
     )
 }
@@ -1567,8 +1588,35 @@ internal class PlaybackActionRuntime(
     private val openAnime: (animeId: Long, pushCurrent: Boolean) -> Unit,
     private val showNotice: (String) -> Unit,
     private val cachedPlaybackAnime: (Long) -> Anime? = { null },
+    loadNextAnime: (suspend (Long, Boolean) -> LoadedAnimeDetails)? = null,
+    private val cacheLoadedAnime: suspend (LoadedAnimeDetails) -> Unit = {},
 ) {
     private val playbackQualityPreferences = PlaybackQualityPreferences()
+
+    private val nextTitlePlayback = loadNextAnime?.let { load ->
+        NextTitlePlaybackCoordinator(
+            scope, currentState, updateState, load,
+            startPlayback = ::startLoadedNextAnime,
+            onUnavailable = { animeId -> openAnime(animeId, false) },
+        )
+    }
+
+    private fun startLoadedNextAnime(loaded: LoadedAnimeDetails, firstVideo: VideoVariant) {
+        updateState { state ->
+            state.copy(
+                route = AppRoute.Details(loaded.details.id),
+                playbackProgress = null, playbackHistory = emptyList(), playbackHistoryLoading = false,
+                selectedVideoGroup = null, commentSubmission = null,
+                detailsExtras = LoadState.Ready(AnimeDetailsExtras()), animeMark = LoadState.Ready(null),
+                nextTitleSuggestion = null,
+            ).withLoadedAnimeDetails(loaded.details.id, loaded)
+        }
+        playVideo(firstVideo, loaded.details.title)
+        scope.launch { cacheLoadedAnime(loaded) }
+    }
+
+    fun confirmNextTitleSuggestion(requestId: Long) { nextTitlePlayback?.confirm(requestId) }
+    fun dismissNextTitleSuggestion(requestId: Long) { nextTitlePlayback?.dismiss(requestId) }
 
     fun playVideo(video: VideoVariant) {
         val title = currentState().details.readyDataOrNull()?.title.orEmpty()
@@ -1707,15 +1755,20 @@ internal class PlaybackActionRuntime(
     fun handlePlaybackEnded(video: VideoVariant) {
         val state = currentState()
         if (!state.acceptsPlaybackCompletion(video)) return
-        state.details.readyDataOrNull()
-            ?.takeIf { it.id == video.animeId }
-            ?: return
         val videos = state.videos.readyListOrEmpty()
         animeMarkCoordinator.maybeMarkWatchedOnCompletion(video, state)
 
         if (!video.hasFollowingEpisodeIn(videos)) {
-            openAnime(video.animeId, false)
+            if (nextTitlePlayback?.onPlaybackCompleted(video) != true) openAnime(video.animeId, false)
         }
+    }
+
+    fun updatePendingPlaybackIntent(video: VideoVariant, playWhenReady: Boolean) {
+        playbackSessionCoordinator.updatePendingPlaybackIntent(video, playWhenReady)
+    }
+
+    fun updatePendingPlaybackPosition(video: VideoVariant, positionMs: Long) {
+        playbackSessionCoordinator.updatePendingPlaybackPosition(video, positionMs)
     }
 
     fun updatePendingRecoveryPosition(video: VideoVariant, positionMs: Long) {
@@ -1854,6 +1907,7 @@ internal class PlaybackActionRuntime(
         lockPlaybackSource: Boolean = false,
         playWhenReady: Boolean = true,
     ) {
+        nextTitlePlayback?.cancel()
         playbackSessionCoordinator.play(
             PlaybackSessionRequest(
                 video = video,

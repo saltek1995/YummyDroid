@@ -93,6 +93,7 @@ internal fun createNativeVideoPlayerControllerBinding(
         animeTitle = binding.animeTitle,
         currentVideo = binding.currentVideo,
         selectedVideo = binding.selectedVideo,
+        selectionPending = binding.selectionPositionMs != null,
         isLocalPlayback = binding.stream.url.startsWith("file:", ignoreCase = true) ||
             binding.stream.url.startsWith("content:", ignoreCase = true) ||
             binding.currentVideo.localPlaybackUrl.isNotBlank(),
@@ -129,6 +130,11 @@ internal fun createNativeVideoPlayerControllerBinding(
         onBack = { latestBinding().onBack() },
         onRequestPlay = { latestSession().playbackActions.requestStart() },
         onPausePlayback = { latestSession().playbackActions.pause() },
+        onPauseForSelection = { latestSession().playbackActions.pauseForSelection() },
+        onPlayerControlSeek = { positionMs ->
+            val current = latestBinding()
+            current.onPlayerControlSeek(current.selectedVideo, positionMs)
+        },
         onPlaybackSelectionStarted = { latestSession().selectionLoading.value = true },
         onRememberPlayerControlFocus = { controlId -> latestBinding().onRememberPlayerControlFocus(controlId) },
     )
@@ -143,6 +149,7 @@ private data class NativePlayerControllerIdentity(
     val animeTitle: String,
     val currentVideo: VideoVariant,
     val selectedVideo: VideoVariant,
+    val selectionPending: Boolean,
     val groups: Map<String, List<VideoVariant>>,
     val voiceOptions: List<PlayerVoiceSelectionOption>,
     val selectedKey: String?,
@@ -180,6 +187,7 @@ private fun rememberNativeVideoPlayerControllerBinding(
         animeTitle = binding.animeTitle,
         currentVideo = binding.currentVideo,
         selectedVideo = binding.selectedVideo,
+        selectionPending = binding.selectionPositionMs != null,
         groups = binding.groups,
         voiceOptions = selection.voiceOptions,
         selectedKey = binding.selectedKey,
@@ -215,10 +223,12 @@ private fun createLocalQualitySelectionHandler(
 ): (OfflineVideoFile) -> Unit = { localFile ->
     val binding = latestBinding()
     val session = latestSession()
-    val positionMs = session.playbackPlayer.currentPosition.coerceAtLeast(0L)
+    val positionMs = binding.selectionPositionMs ?: session.playbackPlayer.currentPosition.coerceAtLeast(0L)
     binding.onKeepControlsVisibleAfterReadyRequested()
-    session.playbackActions.pause()
-    val video = binding.currentVideo.withOfflineFile(localFile)
+    session.playbackActions.pauseForSelection()
+    val matchingFile = binding.selectedVideo.offlineFiles.firstOrNull { it.playbackUrl == localFile.playbackUrl }
+    val video = if (matchingFile != null) binding.selectedVideo.withOfflineFile(matchingFile)
+        else binding.selectedVideo.withoutLocalPlayback()
     val preferredQuality = PreferredQuality.fromHeight(localFile.qualityHeight())
     if (preferredQuality == null) {
         binding.onPlayVideoAt(video, positionMs)
@@ -233,11 +243,11 @@ private fun createPreferredQualitySelectionHandler(
 ): (PreferredQuality) -> Unit = { preferredQuality ->
     val binding = latestBinding()
     val session = latestSession()
-    val positionMs = session.playbackPlayer.currentPosition.coerceAtLeast(0L)
+    val positionMs = binding.selectionPositionMs ?: session.playbackPlayer.currentPosition.coerceAtLeast(0L)
     binding.onKeepControlsVisibleAfterReadyRequested()
-    session.playbackActions.pause()
+    session.playbackActions.pauseForSelection()
     binding.onPlayVideoAtQuality(
-        binding.currentVideo.withoutLocalPlayback(),
+        binding.selectedVideo.withoutLocalPlayback(),
         positionMs,
         preferredQuality,
     )
@@ -253,7 +263,7 @@ private fun createGroupSelectionHandler(
         session.selectionLoading.value = true
         binding.onKeepControlsVisibleAfterReadyRequested()
     }
-    binding.onSelectGroup(groupKey, replacement, positionMs)
+    binding.onSelectGroup(groupKey, replacement, binding.selectionPositionMs ?: positionMs)
 }
 
 private fun createSourceSelectionHandler(
@@ -266,7 +276,7 @@ private fun createSourceSelectionHandler(
         session.selectionLoading.value = true
         binding.onKeepControlsVisibleAfterReadyRequested()
     }
-    binding.onSelectSource(source, positionMs)
+    binding.onSelectSource(source, binding.selectionPositionMs ?: positionMs)
 }
 
 // NativeVideoPlayerFacade
@@ -316,6 +326,11 @@ internal fun NativeVideoPlayer(
     onKeepControlsVisibleAfterReadyRequested: () -> Unit = {},
     onControlsKeptVisibleAfterReady: () -> Unit = {},
     selectedVideo: VideoVariant = currentVideo,
+    selectionPositionMs: Long? = null,
+    playbackError: String? = null,
+    onRetry: () -> Unit = {},
+    onPlayerControlIntentChanged: (VideoVariant, Boolean) -> Unit = { _, _ -> },
+    onPlayerControlSeek: (VideoVariant, Long) -> Unit = { _, _ -> },
 ) {
     NativeVideoPlayerRuntime(
         NativeVideoPlayerRuntimeBinding(
@@ -323,6 +338,11 @@ internal fun NativeVideoPlayer(
             animeTitle = animeTitle,
             currentVideo = currentVideo,
             selectedVideo = selectedVideo,
+            selectionPositionMs = selectionPositionMs,
+            playbackError = playbackError,
+            onRetry = onRetry,
+            onPlayerControlIntentChanged = onPlayerControlIntentChanged,
+            onPlayerControlSeek = onPlayerControlSeek,
             interactive = interactive,
             settings = settings,
             startPositionMs = startPositionMs,
@@ -1059,7 +1079,9 @@ internal fun NativeVideoPlayerRuntime(incomingBinding: NativeVideoPlayerRuntimeB
             alternative = NativeStreamSelection(stream, positionMs, playWhenReady)
         },
     )
-    val session = rememberNativeVideoPlayerRuntimeSession(binding)
+    val retryFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val statusFocus = remember(retryFocus) { PlayerShellFocusBridge(retryFocus) }
+    val session = rememberNativeVideoPlayerRuntimeSession(binding.copy(statusFocus = statusFocus.takeIf { binding.playbackError != null }))
     val isRemotePlayback = session.castSession.isRemotePlayback.value
     val controllerBinding = rememberNativeVideoPlayerControllerBinding(binding, session)
     val loadingIndicatorAnchor = rememberNativePlayerLoadingIndicatorAnchor(session.playerView.value)
@@ -1072,14 +1094,7 @@ internal fun NativeVideoPlayerRuntime(incomingBinding: NativeVideoPlayerRuntimeB
     )
     BindNativeVideoPlayerRuntimeEffects(binding, session)
     val presentationToken = session.displayModePlayer.presentationToken
-    Box(modifier = binding.modifier.drawWithContent {
-        drawContent()
-        if (presentationToken != null) {
-            session.playerView.value?.post {
-                session.displayModePlayer.acknowledgeVideoPresentation(presentationToken)
-            }
-        }
-    }) {
+    Box(modifier = binding.modifier.nativeVideoPresentation(session)) {
         NativePlayerView(
             player = selectNativePlayerViewPlayer(
                 localPlayer = session.displayModePlayer,
@@ -1088,6 +1103,7 @@ internal fun NativeVideoPlayerRuntime(incomingBinding: NativeVideoPlayerRuntimeB
             ),
             videoToken = "${binding.currentVideo.id}:${binding.stream.url}",
             interactive = binding.interactive,
+            preparingDisplay = session.displayModePlayer.preparingDisplay,
             isInPictureInPicture = binding.isInPictureInPicture,
             controllerBinding = controllerBinding,
             playerControlFocusToRestoreId = binding.playerControlFocusToRestoreId,
@@ -1095,13 +1111,30 @@ internal fun NativeVideoPlayerRuntime(incomingBinding: NativeVideoPlayerRuntimeB
             onPlayerControlFocusRestored = binding.onPlayerControlFocusRestored,
             modifier = Modifier.fillMaxSize(),
         )
-        if (session.displayModePlayer.preparingDisplay) {
-            Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black))
+        binding.playbackError?.let { message ->
+            PlayerShellStatus(
+                message = message,
+                retryFocusRequester = retryFocus,
+                statusFocus = statusFocus,
+                controlInsets = rememberPlayerControlInsets(session.playerView.value),
+                onRetry = binding.onRetry,
+            )
         }
         NativePlayerBufferingOverlay(
             visible = (loadingVisible && presentationToken == null) || session.displayModePlayer.preparingDisplay,
             anchor = loadingIndicatorAnchor,
         )
+    }
+}
+
+/** A decoded frame is released only after the host has drawn it without the preparation mask. */
+internal fun Modifier.nativeVideoPresentation(session: NativeVideoPlayerRuntimeSession): Modifier {
+    val token = session.displayModePlayer.presentationToken
+    return drawWithContent {
+        drawContent()
+        if (token != null) session.playerView.value?.post {
+            session.displayModePlayer.acknowledgeVideoPresentation(token)
+        }
     }
 }
 
@@ -1312,6 +1345,12 @@ internal data class NativeVideoPlayerRuntimeBinding(
     val onControlsKeptVisibleAfterReady: () -> Unit,
     val onRuntimeAlternative: ((ResolvedVideoStream, Long, Boolean) -> Unit)? = null,
     val selectedVideo: VideoVariant = currentVideo,
+    val selectionPositionMs: Long? = null,
+    val playbackError: String? = null,
+    val onRetry: () -> Unit = {},
+    val onPlayerControlIntentChanged: (VideoVariant, Boolean) -> Unit = { _, _ -> },
+    val onPlayerControlSeek: (VideoVariant, Long) -> Unit = { _, _ -> },
+    val statusFocus: PlayerShellFocusBridge? = null,
 )
 
 // NativeVideoPlayerRuntimeEffects
@@ -1712,7 +1751,12 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
         mutableStateOf(playbackPlayer.hasReadyTimeline())
     }
     val selectionLoading = remember(playbackPlayer) { mutableStateOf(false) }
-    val playbackActions = rememberNativePlayerPlaybackActions(playbackPlayer)
+    val playbackActions = rememberNativePlayerPlaybackActions(
+        playbackPlayer,
+        beforeStart = {
+            if (binding.playbackError == null) false else { binding.onRetry(); true }
+        },
+    ) { shouldPlay -> binding.onPlayerControlIntentChanged(binding.selectedVideo, shouldPlay) }
     val playerView = remember { mutableStateOf<PlayerView?>(null) }
     val controls = rememberNativeRuntimeControlSelection(binding, player, playerView, displayModePlayer)
     val latestQualityOptions = rememberUpdatedState(controls.selection.qualityOptions)
@@ -1727,6 +1771,7 @@ internal fun rememberNativeVideoPlayerRuntimeSession(
         playerView = { playerView.value },
         isInPictureInPicture = binding.isInPictureInPicture,
         playbackActions = playbackActions,
+        statusFocus = binding.statusFocus,
     )
     val pipPlayerHandle = rememberNativePipPlayerHandle(
         context = context,
@@ -1820,6 +1865,7 @@ private fun rememberNativeRuntimeControlSelection(
     val selection = rememberNativePlayerSelection(
         stream = binding.stream,
         currentVideo = binding.currentVideo,
+        selectedVideo = binding.selectedVideo,
         player = player,
         mediaItemPlayer = mediaItemPlayer,
         playerView = { playerView.value },
@@ -1885,6 +1931,7 @@ internal fun rememberNativePlayerSelection(
     settings: AppSettings,
     offlineMode: Boolean,
     mediaItemPlayer: Player = player,
+    selectedVideo: VideoVariant = currentVideo,
 ): NativePlayerSelectionSnapshot {
     var tracks by remember(player) { mutableStateOf(player.currentTracks) }
     var tracksOptionsIdentity by remember(player) {
@@ -1920,11 +1967,11 @@ internal fun rememberNativePlayerSelection(
         playerView = playerView,
         subtitleOptions = subtitles.options,
     )
-    val voiceOptions = remember(groups, currentVideo, playerControlTexts) {
+    val voiceOptions = remember(groups, selectedVideo, playerControlTexts) {
         playerVoiceSelectionOptions(
             groups = groups,
-            preferredGroupKey = currentVideo.groupKey,
-            currentVideo = currentVideo,
+            preferredGroupKey = selectedVideo.groupKey,
+            currentVideo = selectedVideo,
             texts = playerControlTexts,
         )
     }
@@ -1960,25 +2007,43 @@ internal fun shouldUpdateNativeTracksState(
 internal class NativePlayerPlaybackActions(
     private val player: Player,
     private val uiControls: AppNavigationController,
+    private val onControlIntent: (Boolean) -> Unit = {},
+    private val beforeStart: () -> Boolean = { false },
 ) {
     fun pause() {
+        onControlIntent(false)
+        pauseForSelection()
+    }
+
+    fun pauseForSelection() {
         uiControls.cancel(this, UiControlOperation.PlaybackLatest)
         player.pause()
     }
 
     fun requestStart() {
+        onControlIntent(true)
+        if (beforeStart()) return
         uiControls.cancel(this, UiControlOperation.PlaybackLatest)
-        // Buffering can recover only after playback intent is restored; READY is not a prerequisite.
-        if (player.playbackState != Player.STATE_IDLE && !player.playWhenReady) player.play()
+        // Replay remains available after dismissing the next-title suggestion.
+        if (player.playbackState == Player.STATE_ENDED) {
+            player.seekToDefaultPosition()
+            player.play()
+        } else if (player.playbackState != Player.STATE_IDLE && !player.playWhenReady) player.play()
     }
 }
 
 @Composable
 internal fun rememberNativePlayerPlaybackActions(
     player: Player,
+    beforeStart: () -> Boolean = { false },
+    onControlIntent: (Boolean) -> Unit = {},
 ): NativePlayerPlaybackActions {
     val uiControls = LocalAppNavigationController.current
-    return remember(player, uiControls) { NativePlayerPlaybackActions(player, uiControls) }
+    val latestIntent = rememberUpdatedState(onControlIntent)
+    val latestStart = rememberUpdatedState(beforeStart)
+    return remember(player, uiControls) {
+        NativePlayerPlaybackActions(player, uiControls, { latestIntent.value(it) }, { latestStart.value() })
+    }
 }
 
 @Composable
@@ -1987,14 +2052,20 @@ internal fun RegisterNativePlayerInputController(
     playerView: () -> PlayerView?,
     isInPictureInPicture: Boolean,
     playbackActions: NativePlayerPlaybackActions,
+    statusFocus: PlayerShellFocusBridge? = null,
 ) {
+    val latestStatus = rememberUpdatedState(statusFocus)
     RegisterPlayerInputAdapter(player, isInPictureInPicture, playbackActions) {
-        createPlayerInputController(
+        val native = createPlayerInputController(
             playerView = playerView,
             isInPictureInPicture = isInPictureInPicture,
             onRequestPlay = playbackActions::requestStart,
             onPausePlayback = playbackActions::pause,
+            canInitializeFocus = { latestStatus.value?.let { !it.retryFocused && !it.messageFocused } != false },
         )
+        PlayerInputController(native::hasVisibleControls, native::hideVisibleControls) { event ->
+            latestStatus.value?.handle(playerView(), event) == true || native.handleInput(event)
+        }
     }
 }
 
@@ -2268,6 +2339,7 @@ internal fun NativePlayerView(
     interactive: Boolean,
     isInPictureInPicture: Boolean,
     controllerBinding: PlayerControllerBinding,
+    preparingDisplay: Boolean = false,
     playerControlFocusToRestoreId: Int?,
     onPlayerViewChanged: (PlayerView) -> Unit,
     onPlayerControlFocusRestored: () -> Unit,
@@ -2277,6 +2349,7 @@ internal fun NativePlayerView(
         modifier,
         { view ->
             onPlayerViewChanged(view)
+            view.setVideoPreparationMaskVisible(preparingDisplay)
             view.bindPlayer(
                 player = player,
                 videoToken = videoToken,
@@ -2424,4 +2497,21 @@ private fun PlayerView.applyYummySubtitleStyle() {
             ),
         )
     }
+}
+
+
+/** Content-only mask: controller, popups, and focus stay outside the media preparation layer. */
+internal fun PlayerView.setVideoPreparationMaskVisible(visible: Boolean) {
+    val content = findViewById<android.view.ViewGroup>(Media3R.id.exo_content_frame) ?: return
+    var mask = content.findViewById<View>(R.id.yummy_player_video_preparation_mask)
+    if (mask == null && visible) {
+        mask = View(context).apply {
+            id = R.id.yummy_player_video_preparation_mask
+            setBackgroundColor(Color.BLACK)
+            isClickable = false
+            isFocusable = false
+        }
+        content.addView(mask, android.view.ViewGroup.LayoutParams(-1, -1))
+    }
+    mask?.visibility = if (visible) View.VISIBLE else View.GONE
 }

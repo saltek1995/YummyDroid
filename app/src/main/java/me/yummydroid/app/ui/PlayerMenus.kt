@@ -1073,6 +1073,7 @@ internal fun prepareQualityPopup(
     onSelectPreferredQuality: (PreferredQuality) -> Unit,
     onPlaybackSelectionStarted: () -> Unit = {},
     onRememberPlayerControlFocus: (Int) -> Unit = {},
+    selectionPending: Boolean = false,
 ): PopupMenu {
     val effectiveSelectedQualityKey = anchor.tagValue<String>(R.id.yummy_player_quality)
         ?: selectedQualityKey
@@ -1101,11 +1102,14 @@ internal fun prepareQualityPopup(
         // An observed adaptive height is still selectable as a fixed quality.
         val playableOption = player.currentTracks.videoQualityOptions()
             .firstOrNull { it.qualityOptionIdentity() == option.qualityOptionIdentity() }
-        if (option.localFile == null && playableOption != null && player.hasQualityOverride(playableOption)) {
+        if (!selectionPending && option.localFile == null && playableOption != null && player.hasQualityOverride(playableOption)) {
             return@setOnMenuItemClickListener true
         }
         onPlaybackSelectionStarted()
         when {
+            selectionPending && option.localFile == null -> onSelectPreferredQuality(
+                option.preferredQuality ?: PreferredQuality.fromHeight(option.height) ?: PreferredQuality.Auto,
+            )
             option.localFile != null -> anchor.post { onSelectLocalQuality(option.localFile) }
             option.preferredQuality != null -> onSelectPreferredQuality(option.preferredQuality)
             else -> player.selectQuality(option)
@@ -1264,6 +1268,8 @@ internal fun playerVoiceSelectionOptions(
     currentVideo: VideoVariant,
     texts: PlayerControlTexts,
 ): List<PlayerVoiceSelectionOption> {
+    val titleEpisodeCount = groups.values.asSequence().flatten().map { it.matchingEpisodeKey }
+        .filter { it.isNotBlank() }.distinct().count()
     return groups.entries.mapIndexed { index, entry ->
         val voiceTitle = entry.value.firstOrNull()?.matchingVoiceTitle.orEmpty()
             .ifBlank { "${texts.voice} ${index + 1}" }
@@ -1279,7 +1285,7 @@ internal fun playerVoiceSelectionOptions(
         }
         PlayerVoiceSelectionOption(
             key = entry.key,
-            label = "$voiceTitle (${summary.availableEpisodes})$downloadedSuffix",
+            label = "$voiceTitle (${entry.value.availableEpisodeLabel(titleEpisodeCount)})$downloadedSuffix",
             groupKey = summary.replacement?.groupKey ?: summary.fallbackGroupKey ?: entry.key,
             replacement = summary.replacement,
         )

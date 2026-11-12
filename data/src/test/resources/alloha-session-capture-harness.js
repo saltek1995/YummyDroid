@@ -84,12 +84,15 @@ window.runCaptureHarness = async () => {
         return Promise.resolve();
     };
     captureHarness.timers.forEach(fn => fn());
-    check(normalClicks === 0, 'must wait for HTTP listeners');
-    window.storageAvailable = () => true;
+    check(normalClicks === 0, 'unknown content configuration must not start');
+    // No provider-specific global capability function is required.
     player.eventListeners = [{type:'play',element:document,callback:function() { return '/stat'; }}];
     captureHarness.timers.forEach(fn => fn());
     check(normalClicks === 0, 'unrelated stat listener must not enable startup');
     player.eventListeners[0].element = container;
+    // New provider builds delegate /stat to a helper from playing, with opaque callbacks.
+    // Startup must not depend on listener names, event type, or Function.toString().
+    player.eventListeners = [{type:'playing',element:container,callback:function() { return renamedHelper(); }}];
     captureHarness.timers.forEach(fn => fn());
     check(normalClicks === 0, 'ad-enabled or unknown configuration must not start');
     const unrelatedConfig = JSON.parse('{"ads":{"enabled":true},"value":3}', (key, value) => key === 'value' ? 4 : value);

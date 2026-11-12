@@ -678,13 +678,16 @@ internal class OfflineDownloadRegistry(private val rootDir: File) {
     fun upsert(video: VideoVariant, offlineFile: OfflineVideoFile) = synchronized(OfflineStorageAccess) {
         val index = readIndex(video.animeId)
         val record = offlineFile.toDownloadRecord(video)
+        val removed = mutableListOf<OfflineDownloadRecord>()
         val retained = index.records.filterNot { existing ->
-            existing.playbackUrl == record.playbackUrl ||
+            val superseded = existing.playbackUrl == record.playbackUrl ||
                 (
                     existing.slotKey == record.slotKey &&
                         existing.qualityHeight == record.qualityHeight &&
                         existing.player.equals(record.player, ignoreCase = true)
                 )
+            if (superseded) removed += existing
+            superseded
         }
         writeIndex(
             video.animeId,
@@ -692,7 +695,7 @@ internal class OfflineDownloadRegistry(private val rootDir: File) {
         )
         // Replacement authorizes deletion only for records read from this index,
         // and only after the new record has been published successfully.
-        index.records.filter { it !in retained && it.playbackUrl != record.playbackUrl }
+        removed.filter { it.playbackUrl != record.playbackUrl }
             .forEach { it.playbackUrl.toOfflineLocalFile()?.deleteOfflineDownloadPackage() }
     }
 
@@ -809,7 +812,10 @@ internal fun OfflineAnimeEntry.withoutAccountPersonalization(): OfflineAnimeEntr
 
 internal suspend fun YummyAnimeRepository.repositoryOfflineAnime(): List<OfflineAnimeEntry> =
     withContext(Dispatchers.IO) {
-        offlineStorage?.readAll().orEmpty().map { it.copy(videos = overlayOfflineSubscriptions(it.videos)) }
+        val entries = offlineStorage?.readAll().orEmpty()
+        entries.zip(overlayOfflineSubscriptionGroups(entries.map(OfflineAnimeEntry::videos))) { entry, videos ->
+            entry.copy(videos = videos)
+        }
     }
 
 internal suspend fun YummyAnimeRepository.repositoryDeleteOfflineVideo(
@@ -1013,6 +1019,7 @@ fun List<VideoVariant>.withOfflineDownloads(
     offlineVideos: List<VideoVariant>,
 ): List<VideoVariant> {
     val availableOfflineVideos = offlineVideos.filter { it.isOfflineAvailable }
+    if (availableOfflineVideos.isEmpty()) return map { it.withoutOfflinePlayback() }
     val offlineById = availableOfflineVideos.groupBy { it.id }
     val offlineBySlot = availableOfflineVideos.groupBy { it.sourceSlotKey }
     val offlineByVoiceSlot = availableOfflineVideos.groupBy { it.downloadVoiceSlotKey }
@@ -1049,6 +1056,7 @@ internal data class UserMarkFilterIds(
 )
 
 internal fun VideoVariant.withoutOfflinePlayback(): VideoVariant {
+    if (localPlaybackUrl.isEmpty() && localMimeType == null && localBytes == 0L && localFiles.isEmpty()) return this
     return copy(
         localPlaybackUrl = "",
         localMimeType = null,

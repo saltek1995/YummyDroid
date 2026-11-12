@@ -2,10 +2,12 @@ package me.yummydroid.app.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -16,6 +18,9 @@ import dev.chrisbanes.haze.HazeStyle
 import dev.chrisbanes.haze.HazeTint
 import dev.chrisbanes.haze.hazeEffect
 
+/** Rendering policy for software hosts/previews; normal app windows retain live backdrop effects. */
+internal val LocalBackdropBlurEnabled = staticCompositionLocalOf { true }
+
 fun Modifier.liquidGlassBackdrop(
     shape: Shape,
     intensity: Float = 1f,
@@ -23,6 +28,11 @@ fun Modifier.liquidGlassBackdrop(
     topFadeFraction: Float = 0.24f,
     bottomFadeFraction: Float = 0f,
 ): Modifier = composed {
+    // Software windows/previews have no GPU input Surface for a live backdrop blur.
+    val view = LocalView.current
+    val hardwareBackdropAvailable = LocalBackdropBlurEnabled.current && view.isHardwareAccelerated &&
+        generateSequence(view as android.view.View?) { it.parent as? android.view.View }
+            .none { it.layerType == android.view.View.LAYER_TYPE_SOFTWARE }
     val parameters = resolveLiquidGlassBackdropParameters(
         intensity = intensity,
         topFadeFraction = topFadeFraction,
@@ -36,7 +46,7 @@ fun Modifier.liquidGlassBackdrop(
 
     this
         .then(
-            if (hazeState == null) {
+            if (hazeState == null || !hardwareBackdropAvailable) {
                 Modifier.background(brush = fallbackBrush, shape = shape)
             } else {
                 Modifier.hazeEffect(hazeState, style = hazeRendering.style) {

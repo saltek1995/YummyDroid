@@ -136,7 +136,6 @@ class AllohaDiscoveryHandoffTest {
         fetch('https://imasdk.googleapis.com/cekh8i', {method:'HEAD',mode:'no-cors'})
             .catch(function() { advertisingProbeBlocked = true; });
         document.addEventListener('click', function() { firstClick = true; }, true);
-        window.storageAvailable = function() { return true; };
         function submitInitialStat() {
             return fetch('/stat', {method:'POST',body:'id=file&token=http-token&domain=site.test&type=mgpo&ab=false&info[wasm]=true&info[resolution][screenWidth]=1280'});
         }
@@ -150,17 +149,21 @@ class AllohaDiscoveryHandoffTest {
             player.media.play();
             var socket = new WebSocket('wss://socket.fixture.test/channel?sid=synthetic&v=2.1');
             socket.send(JSON.stringify({type:'playback_start',track_id:'1'}));
+            player.elements.container.dispatchEvent(new Event('playing'));
+        }};
+        function providerOnPlaying() {
             submitInitialStat().then(function() {
                 var envelope = {token:'http-token',domain:'site.test',clientSessionId:'http-view',clientRequestId:'request',
                     env:{pixelRatio:1},playerInitAt:1234,events:[{event_type:'view_start',at:5678}]};
                 return fetch('/events', {method:'POST',body:new URLSearchParams({token:'http-token',payload:JSON.stringify(envelope)})});
             });
-        }};
+        }
+        player.elements.container.addEventListener('playing', providerOnPlaying);
         player.media.play = function() {
             if (player.volume !== 0 || !this.muted) throw Error('provider gain must not make discovery audible');
             return Promise.resolve();
         };
-        player.eventListeners = [{type:'play',element:player.elements.container,callback:submitInitialStat}];
+        player.eventListeners = [{type:'playing',element:player.elements.container,callback:providerOnPlaying}];
         document.querySelector('[data-allplay="play"]').addEventListener('click',function() { player.play(); });
         document.querySelector('[data-allplay="play-large-ads"]').addEventListener('click',function() {
             throw Error('advertisement control must never be selected');
@@ -179,12 +182,14 @@ class AllohaDiscoveryHandoffTest {
                     'url':location.href,'type':'mgpo','ab':adBlockStatus,'info':{wasm:true}};
         """.trimIndent())
             .replace("return fetch('/stat',", "return fetch(endpoint(),")
+            .replace("window.player = {config:config,ready:true", "window.player = {config:config,ready:false")
             .replace("if (!firstClick)", "if (!capabilitiesReady) throw Error('started before capability listener installation'); if (!firstClick)")
-            .replace("player.eventListeners = [{type:'play',element:player.elements.container,callback:submitInitialStat}];", """
+            .replace("player.eventListeners = [{type:'playing',element:player.elements.container,callback:providerOnPlaying}];", """
                 player.eventListeners = [{type:'play',element:player.elements.container,callback:function() { /* unrelated core listener */ }}];
                 setTimeout(function() {
                     capabilitiesReady = true;
-                    player.eventListeners.push({type:'play',element:player.elements.container,callback:submitInitialStat});
+                    player.ready = true;
+                    player.eventListeners.push({type:'playing',element:player.elements.container,callback:function() { providerOnPlaying(); }});
                 }, 750);
             """.trimIndent())
     }

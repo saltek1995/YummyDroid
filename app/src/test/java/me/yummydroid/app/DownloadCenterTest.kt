@@ -280,6 +280,28 @@ class DownloadCenterTest {
         }
     }
 
+    @Test
+    fun rejectedAndNoOpUpdatesDoNotPublishOrPersist() {
+        val persisted = mutableListOf<Pair<List<DownloadTaskUi>, Boolean>>()
+        val controller = DownloadCenterController { tasks, progressOnly -> persisted += tasks to progressOnly }
+        val id = controller.addTask(DownloadTaskRequest(1L, 1L, "Anime", "Episode"))
+        controller.updateTask(id, DownloadTaskUpdate(state = DownloadTaskState.Completed))
+        val completed = controller.task(id)
+        persisted.clear()
+
+        assertFalse(controller.updateTaskIfUnstopped(999L, DownloadTaskUpdate(progress = 1f)))
+        assertTrue(controller.updateTaskIfUnstopped(id, DownloadTaskUpdate(title = completed?.title)))
+        assertEquals(completed, controller.task(id))
+        assertTrue(persisted.isEmpty())
+
+        controller.requestPause(id)
+        val stopped = controller.task(id)
+        persisted.clear()
+        assertFalse(controller.updateTaskIfUnstopped(id, DownloadTaskUpdate(title = completed?.title)))
+        assertEquals(stopped, controller.task(id))
+        assertTrue(persisted.isEmpty())
+    }
+
     private fun addBatchTask(videoId: Long?, isSummary: Boolean = false): Long {
         return DownloadCenter.addTask(
             animeId = 10L,

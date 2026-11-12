@@ -28,6 +28,7 @@ import me.yummydroid.app.data.ResolvedEmbeddedSubtitleTrack
 import me.yummydroid.app.data.ResolvedSubtitleTrack
 import me.yummydroid.app.data.SourceQuality
 import me.yummydroid.app.data.VideoVariant
+import me.yummydroid.app.data.availableEpisodeCount
 import me.yummydroid.app.data.bestSourceQualityPerHeight
 import me.yummydroid.app.data.cleanVideoSourceLabel
 import me.yummydroid.app.data.episodeOrderValue
@@ -38,7 +39,6 @@ import me.yummydroid.app.data.matchingVoiceKey
 import me.yummydroid.app.data.playableOfflineFilesByQuality
 import me.yummydroid.app.data.qualityHeight
 import me.yummydroid.app.data.selectForPreferredQuality
-import me.yummydroid.app.data.sourceEpisodeCounts
 import me.yummydroid.app.data.sourceProviderRank
 import me.yummydroid.app.data.withoutLocalPlayback
 import me.yummydroid.app.hasSamePlaybackSourceAs
@@ -229,7 +229,13 @@ internal fun List<VideoVariant>.sourceOptionsFor(
         candidate.animeId == currentVideo.animeId &&
             candidate.matchingVoiceKey == voiceKey
     }
-    val episodeCountsBySource = voiceVideos.sourceEpisodeCounts()
+    val titleEpisodeCount = filter { it.animeId == currentVideo.animeId }.availableEpisodeCount()
+    val episodeLabelsBySource = voiceVideos.groupBy { it.matchingSourceKey }
+        .mapValues { (_, videos) -> videos.availableEpisodeLabel(titleEpisodeCount) }
+    val localVideos = voiceVideos.filter { it.isOfflineAvailable }
+        .ifEmpty { listOfNotNull(currentVideo.takeIf { it.isOfflineAvailable }) }
+    val localEpisodeLabel = localVideos.availableEpisodeLabel(titleEpisodeCount)
+
     return filter { candidate ->
         candidate.animeId == currentVideo.animeId &&
             candidate.isSameEpisodeAs(currentVideo) &&
@@ -249,12 +255,12 @@ internal fun List<VideoVariant>.sourceOptionsFor(
         .distinctBy { it.sourceSelectionKey }
         .map { video ->
             if (video.isOfflineAvailable) {
-                return@map SourceOption(key = video.sourceSelectionKey, label = "Local", video = video)
+                return@map SourceOption(key = video.sourceSelectionKey, label = "Local ($localEpisodeLabel)", video = video)
             }
             val sourceLabel = video.playbackSourceLabel(false)
-            val sourceEpisodeCount = episodeCountsBySource[video.matchingSourceKey].takeIf { it != null && it > 0 }
+            val sourceEpisodeLabel = episodeLabelsBySource[video.matchingSourceKey]
             val suffixParts = buildList {
-                sourceEpisodeCount?.let { add(it.toString()) }
+                sourceEpisodeLabel?.let { add(it) }
                 if (
                     video.matchingSourceKey in sourceSubtitleSourceKeys ||
                     video.sourceSelectionKey in sourceSubtitleSelectionKeys
@@ -796,6 +802,7 @@ internal fun PlayerView.bindPlayerQualityControl(binding: PlayerControllerBindin
             prepareQualityPopup(
                 anchor = this,
                 player = binding.player,
+                selectionPending = binding.selectionPending,
                 options = binding.qualityOptions,
                 selectedQualityKey = binding.selectedQualityKey,
                 onSelectedQualityKeyChange = binding.onSelectedQualityKeyChange,
@@ -992,10 +999,29 @@ internal fun androidx.media3.common.Format.qualityLabel(): String {
 
 // PlayerVideoSelection
 internal fun List<VideoVariant>.sortedForPlayer(): List<VideoVariant> {
-    return sortedWith(
-        compareBy<VideoVariant> { it.episodeOrderValue() ?: Double.MAX_VALUE }
-            .thenBy { it.index.takeIf { index -> index > 0 } ?: Int.MAX_VALUE }
-            .thenBy { if (it.isOfflineAvailable) 0 else 1 }
+    // Parse episode numbers once, rather than on every comparator invocation.
+    return map { it to (it.episodeOrderValue() ?: Double.MAX_VALUE) }
+        .sortedWith(
+            compareBy<Pair<VideoVariant, Double>> { it.second }
+                .thenBy { it.first.index.takeIf { index -> index > 0 } ?: Int.MAX_VALUE }
+                .thenBy { if (it.first.isOfflineAvailable) 0 else 1 }
+                .thenBy { it.first.id },
+        )
+        .map { it.first }
+}
+
+internal fun List<VideoVariant>.preferredEpisodeVariant(
+    preferredGroupKey: String?,
+    preferredVoiceKey: String?,
+): VideoVariant? {
+    val voiceKey = preferredVoiceKey?.takeIf { it.isNotBlank() }
+    val scoped = voiceKey?.let { key -> filter { it.matchingVoiceKey == key } }
+        ?.takeIf { it.isNotEmpty() } ?: this
+    return scoped.minWithOrNull(
+        compareBy<VideoVariant> { if (it.isOfflineAvailable) 0 else 1 }
+            .thenBy { if (it.groupKey == preferredGroupKey) 0 else 1 }
+            .thenBy { sourceProviderRank(it.player) }
+            .thenBy { it.index }
             .thenBy { it.id },
     )
 }
@@ -1011,15 +1037,7 @@ internal fun List<VideoVariant>.sortedForPlayer(
         ?: this
     return scopedVideos.groupBy { it.matchingEpisodeKey }
         .values
-        .mapNotNull { variants ->
-            variants.minWithOrNull(
-                compareBy<VideoVariant> { if (it.isOfflineAvailable) 0 else 1 }
-                    .thenBy { if (it.groupKey == preferredGroupKey) 0 else 1 }
-                    .thenBy { sourceProviderRank(it.player) }
-                    .thenBy { it.index }
-                    .thenBy { it.id },
-            )
-        }
+        .mapNotNull { variants -> variants.preferredEpisodeVariant(preferredGroupKey, null) }
         .sortedForPlayer()
 }
 

@@ -52,15 +52,30 @@ class PausedPlaybackIntentTest {
         }
     }
 
+    @Test fun playAfterDecliningNextTitleReplaysTheEndedEpisode() {
+        val local = ExoPlayer.Builder(RuntimeEnvironment.getApplication()).build()
+        try {
+            val player = ProbePlayer(local).apply { state = Player.STATE_ENDED }
+            NativePlayerPlaybackActions(player, AppNavigationController()).requestStart()
+            assertEquals(1, player.replays)
+            assertEquals(1, player.plays)
+            assertTrue(player.playWhenReady)
+        } finally {
+            local.release()
+        }
+    }
+
     private class ProbePlayer(local: Player) : ForwardingPlayer(local) {
         var state = Player.STATE_BUFFERING
         private var intent = false
         var plays = 0
         var pauses = 0
+        var replays = 0
         override fun getPlaybackState() = state
         override fun getPlayWhenReady() = intent
         override fun isPlaying() = state == Player.STATE_READY && intent
         override fun play() { intent = true; plays++ }
         override fun pause() { intent = false; pauses++ }
+        override fun seekToDefaultPosition() { replays++ }
     }
 }

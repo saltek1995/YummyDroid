@@ -20,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -203,17 +204,32 @@ private fun ScreenshotPager(
         modifier = Modifier.fillMaxSize(),
     ) { index ->
         val zoomableState = rememberZoomableState()
-        val request = remember(context, screenshots[index], networkPolicy) {
-            coil.request.ImageRequest.Builder(context).data(screenshots[index]).networkCachePolicy(networkPolicy).build()
+        val url = screenshots[index]
+        var retry by remember(url) { mutableIntStateOf(0) }
+        var loading by remember(url, retry) { mutableStateOf(true) }
+        var failed by remember(url, retry) { mutableStateOf(false) }
+        val request = remember(context, url, networkPolicy, retry) {
+            coil.request.ImageRequest.Builder(context).data(url).networkCachePolicy(networkPolicy)
+                .setParameter("yummy.screenshot.retry", retry, memoryCacheKey = null).build()
         }
-        AsyncImage(
-            model = request,
-            contentDescription = null,
-            contentScale = ContentScale.Fit,
-            modifier = Modifier
-                .fillMaxSize()
-                .zoomable(zoomableState),
-        )
+        Box(Modifier.fillMaxSize()) {
+            AsyncImage(
+                model = request,
+                contentDescription = uiText(me.yummydroid.app.R.string.ui_screenshot_position, index + 1, screenshots.size),
+                contentScale = ContentScale.Fit,
+                onLoading = { loading = true; failed = false },
+                onSuccess = { loading = false; failed = false },
+                onError = { loading = false; failed = true },
+                modifier = Modifier.fillMaxSize().zoomable(zoomableState),
+            )
+            if (loading) LoadingPane(Modifier.fillMaxSize())
+            if (failed) ErrorPane(
+                message = uiText(me.yummydroid.app.R.string.ui_image_load_failed),
+                onRetry = { retry++ },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+
     }
 }
 

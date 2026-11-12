@@ -140,27 +140,41 @@ internal fun shouldBindSkipPromptControls(
 // PlayerControllerBinder
 @OptIn(UnstableApi::class)
 internal fun PlayerView.bindYummyController(binding: PlayerControllerBinding) {
-    if (tagValue<PlayerControllerBinding>(R.id.yummy_player_controller_binding) === binding) {
-        // The view's skip session can be detached independently of the cached controller.
+    val previous = tagValue<PlayerControllerBinding>(R.id.yummy_player_controller_binding)
+    if (previous === binding) {
         bindPlayerSkipControls(binding)
         return
     }
     setTag(R.id.yummy_player_controller_binding, binding)
+    setTag(R.id.yummy_player_request_play_callback, binding.onRequestPlay)
+    setTag(R.id.yummy_player_pause_callback, binding.onPausePlayback)
     ensurePlayerPopupHost()
-    bindPlayerMetadata(binding)
-    bindPlayerEpisodeControls(binding)
-    bindPlayerVoiceControl(binding)
-    bindPlayerSourceControl(binding)
-    bindPlayerQualityControl(binding)
-    bindPlayerSubtitleControl(binding)
-    bindPlayerSubscriptionControl(binding)
-    bindPlayerSpeedControl(binding)
-    bindPlayerCastControl(binding)
-    bindPlayerPictureInPictureControl(binding)
+    installPlayerControlSeekListener()
+    // The controller outlives the media. Refresh only sections whose displayed data changed.
+    val first = previous == null || previous.playbackPlayer !== binding.playbackPlayer
+    val textsChanged = previous?.texts != binding.texts
+    if (first || textsChanged || previous?.animeTitle != binding.animeTitle ||
+        previous.selectedVideo != binding.selectedVideo || previous.groups != binding.groups ||
+        previous.isLocalPlayback != binding.isLocalPlayback) bindPlayerMetadata(binding)
+    if (first || previous?.previousVideo != binding.previousVideo || previous.nextVideo != binding.nextVideo) bindPlayerEpisodeControls(binding)
+    if (first || textsChanged || previous?.voiceOptions != binding.voiceOptions || previous.selectedKey != binding.selectedKey) bindPlayerVoiceControl(binding)
+    if (first || textsChanged || previous?.sourceOptions != binding.sourceOptions || previous.selectedSourceKey != binding.selectedSourceKey) bindPlayerSourceControl(binding)
+    if (first || textsChanged || previous?.qualityOptions != binding.qualityOptions || previous.selectedQualityKey != binding.selectedQualityKey || previous.selectionPending != binding.selectionPending) bindPlayerQualityControl(binding)
+    if (first || textsChanged || previous?.subtitleOptions != binding.subtitleOptions || previous.selectedSubtitleKey != binding.selectedSubtitleKey || previous.subtitlesLoading != binding.subtitlesLoading) bindPlayerSubtitleControl(binding)
+    if (first || textsChanged || previous?.allowSubscription != binding.allowSubscription || previous.subscriptionActive != binding.subscriptionActive) bindPlayerSubscriptionControl(binding)
+    if (first || textsChanged || previous?.settings != binding.settings || playerSpeedControlNeedsRestore()) bindPlayerSpeedControl(binding)
+    if (first || previous?.castSession !== binding.castSession || previous.stream != binding.stream || previous.currentVideo != binding.currentVideo) bindPlayerCastControl(binding)
+    if (first || previous?.canUsePictureInPicture != binding.canUsePictureInPicture || previous.isRemotePlayback != binding.isRemotePlayback) bindPlayerPictureInPictureControl(binding)
     bindPlayerSkipControls(binding)
-    bindSkipTimelineMarkers(currentVideo = binding.currentVideo)
+    if (first || previous?.currentVideo != binding.currentVideo) bindSkipTimelineMarkers(currentVideo = binding.currentVideo)
     bindPlayerDebugOverlay(binding)
-    configurePlayerFocusNavigation()
+    if (first) configurePlayerFocusNavigation()
+
+}
+
+private fun PlayerView.playerSpeedControlNeedsRestore(): Boolean {
+    val control = findViewById<View>(R.id.yummy_player_speed) ?: return false
+    return !control.isEnabled || !control.isFocusable
 }
 
 // PlayerControllerBinding
@@ -207,6 +221,9 @@ internal class PlayerControllerBinding(
     val onPlaybackSelectionStarted: () -> Unit = {},
     val onRememberPlayerControlFocus: (Int) -> Unit,
     val selectedVideo: VideoVariant = currentVideo,
+    val selectionPending: Boolean = false,
+    val onPauseForSelection: () -> Unit = onPausePlayback,
+    val onPlayerControlSeek: (Long) -> Unit = {},
 )
 
 // PlayerControlRegistry
@@ -739,17 +756,16 @@ internal fun PlayerView.bindPlayerMetadata(binding: PlayerControllerBinding) {
         )
 
     findViewById<View>(Media3R.id.exo_settings)?.visibility = View.GONE
-    findViewById<View>(R.id.yummy_player_back)?.setOnClickListener { binding.onBack() }
+    findViewById<View>(R.id.yummy_player_back)?.setOnClickListener {
+        (tagValue<PlayerControllerBinding>(R.id.yummy_player_controller_binding) ?: binding).onBack()
+    }
     findViewById<View>(Media3R.id.exo_play_pause)?.apply {
         // The loading shell hides this button on the same reusable PlayerView.
         visibility = View.VISIBLE
         setOnClickListener {
-            recordPlayerDebugOverlayPlayPauseHit(binding)
-            if (binding.playbackPlayer.playWhenReady) {
-                binding.onPausePlayback()
-            } else {
-                binding.onRequestPlay()
-            }
+            val current = tagValue<PlayerControllerBinding>(R.id.yummy_player_controller_binding) ?: binding
+            recordPlayerDebugOverlayPlayPauseHit(current)
+            if (current.playbackPlayer.playWhenReady) current.onPausePlayback() else current.onRequestPlay()
         }
     }
 }
@@ -761,7 +777,7 @@ internal fun PlayerView.bindPlayerEpisodeControls(binding: PlayerControllerBindi
             binding.previousVideo?.let { previousVideo ->
                 showVoiceFallbackToast(context, binding.currentVideo, previousVideo)
                 binding.onPlaybackSelectionStarted()
-                binding.onPausePlayback()
+                binding.onPauseForSelection()
                 binding.onPlayVideoAt(previousVideo, 0L)
             }
         }
@@ -773,7 +789,7 @@ internal fun PlayerView.bindPlayerEpisodeControls(binding: PlayerControllerBindi
             binding.nextVideo?.let { nextVideo ->
                 showVoiceFallbackToast(context, binding.currentVideo, nextVideo)
                 binding.onPlaybackSelectionStarted()
-                binding.onPausePlayback()
+                binding.onPauseForSelection()
                 binding.onPlayVideoAt(nextVideo, 0L)
             }
         }
@@ -791,7 +807,7 @@ internal fun PlayerView.bindPlayerVoiceControl(binding: PlayerControllerBinding)
                 onPlaybackSelectionStarted = binding.onPlaybackSelectionStarted,
                 onRememberPlayerControlFocus = binding.onRememberPlayerControlFocus,
                 onSelectGroup = { groupKey, replacement ->
-                    binding.onPausePlayback()
+                    binding.onPauseForSelection()
                     binding.onSelectGroup(
                         groupKey,
                         replacement,
@@ -820,7 +836,7 @@ internal fun PlayerView.bindPlayerSourceControl(binding: PlayerControllerBinding
                 onPlaybackSelectionStarted = binding.onPlaybackSelectionStarted,
                 onRememberPlayerControlFocus = binding.onRememberPlayerControlFocus,
                 onSelectSource = { source ->
-                    binding.onPausePlayback()
+                    binding.onPauseForSelection()
                     binding.onSelectSource(
                         source,
                         binding.playbackPlayer.currentPosition.coerceAtLeast(0L),
@@ -1559,3 +1575,20 @@ private data class TimelineMarker(
     val timeMs: Long,
     val played: Boolean,
 )
+
+
+@OptIn(UnstableApi::class)
+private fun PlayerView.installPlayerControlSeekListener() {
+    val bar = findViewById<View>(Media3R.id.exo_progress) as? TimeBar ?: return
+    if (tagValue<Any>(R.id.yummy_player_control_seek_listener) != null) return
+    val listener = object : TimeBar.OnScrubListener {
+        override fun onScrubStart(timeBar: TimeBar, position: Long) = Unit
+        override fun onScrubMove(timeBar: TimeBar, position: Long) = Unit
+        override fun onScrubStop(timeBar: TimeBar, position: Long, canceled: Boolean) {
+            if (!canceled) tagValue<PlayerControllerBinding>(R.id.yummy_player_controller_binding)
+                ?.onPlayerControlSeek?.invoke(position.coerceAtLeast(0L))
+        }
+    }
+    setTag(R.id.yummy_player_control_seek_listener, listener)
+    bar.addListener(listener)
+}

@@ -29,7 +29,6 @@ internal class AllohaSessionCapture(private val providerPageUrl: String? = null,
         "providerSource=${providerReadiness?.get("source") == JsonPrimitive(true)}",
         "providerControl=${providerReadiness?.get("control") == JsonPrimitive(true)}",
         "eventsReady=${providerReadiness?.get("eventsReady") == JsonPrimitive(true)}",
-        "statReady=${providerReadiness?.get("statReady") == JsonPrimitive(true)}",
         "contentOnly=${providerReadiness?.get("contentOnly") == JsonPrimitive(true)}",
         "startAttempted=${providerReadiness?.get("attempted") == JsonPrimitive(true)}",
     ).joinToString(",")
@@ -464,29 +463,14 @@ internal val ALLOHA_SESSION_CAPTURE_SCRIPT = """
             var container = player && player.elements && player.elements.container;
             var control = container && container.querySelector
                 ? container.querySelector('.allplay__control--overlaid[data-allplay="play"]') : null;
-            // These read-only markers follow the provider's HTTP listener installation.
-            // The scoped /stat listener is registered only after its asynchronous capability probes.
-            var statReady = Array.isArray(player && player.eventListeners) && player.eventListeners.some(function(entry) {
-                if (!entry || entry.type !== 'play' || entry.element !== container || typeof entry.callback !== 'function') return false;
-                try {
-                    var callback = Function.prototype.toString.call(entry.callback);
-                    if (/["']\/stat["']/.test(callback)) return true;
-                    // Recent bundles decode the endpoint at runtime. Identify the provider's
-                    // same capability-gated form builder, not an arbitrary early play listener.
-                    return /["']id["']\s*:\s*fileList\s*\[/.test(callback) &&
-                        /["']token["']\s*:\s*userParam\s*\[/.test(callback) &&
-                        /["']domain["']\s*:\s*userParam\s*\[/.test(callback) &&
-                        /["']url["']\s*:\s*location\s*(?:\[|\.)/.test(callback) &&
-                        /["']ab["']\s*:\s*adBlockStatus\b/.test(callback) &&
-                        /["']info["']\s*:/.test(callback);
-                }
-                catch (_) { return false; }
-            });
+            // Provider callbacks can be renamed, wrapped, or moved from play to playing.
+            // Start the normal content control from public readiness; native handoff still
+            // waits for observed HTTP startup, settled requests, and signed media/socket traffic.
             var state = {ready:!!(player && player.ready === true), video:media instanceof HTMLVideoElement && !!(container && container.contains(media)),
-                source:hasSource, control:!!control, eventsReady:typeof window.storageAvailable === 'function',
-                statReady:statReady, contentOnly:contentOnlyConfig && !!(player && player.config && player.config.ads && player.config.ads.enabled === false),
+                source:hasSource, control:!!control, eventsReady:!!(http && http.envelope),
+                contentOnly:contentOnlyConfig && !!(player && player.config && player.config.ads && player.config.ads.enabled === false),
                 attempted:startAttempted, playing:!!(media && !media.paused)};
-            if (!startAttempted && state.contentOnly && state.ready && state.video && state.source && state.eventsReady && state.statReady && control && media.paused) {
+            if (!startAttempted && state.contentOnly && state.ready && state.video && state.source && control && !control.disabled && control.isConnected && media.paused) {
                 // The exact normal player control runs its first-click and HLS initialization handlers.
                 // Mark before dispatch: discovery never retries clicks or touches advertisement controls.
                 startAttempted = true;

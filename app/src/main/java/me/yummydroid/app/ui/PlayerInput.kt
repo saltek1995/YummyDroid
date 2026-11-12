@@ -196,7 +196,14 @@ internal fun findAdjacentPlayerVideo(
     allVideos: List<VideoVariant>,
     selectedGroup: String?,
     forward: Boolean,
-): VideoVariant? {
+): VideoVariant? = findAdjacentPlayerVideos(currentVideo, allVideos, selectedGroup)
+    .let { if (forward) it.second else it.first }
+
+internal fun findAdjacentPlayerVideos(
+    currentVideo: VideoVariant,
+    allVideos: List<VideoVariant>,
+    selectedGroup: String?,
+): Pair<VideoVariant?, VideoVariant?> {
     val videos = allVideos.ifEmpty { listOf(currentVideo) }
     val preferredVoiceKey = selectedGroup
         ?.let { groupKey -> videos.firstOrNull { it.groupKey == groupKey }?.matchingVoiceKey }
@@ -224,9 +231,8 @@ internal fun findAdjacentPlayerVideo(
 
     val currentIndex = episodeVideos.indexOfFirst { it.isSameEpisodeAs(currentVideo) }
         .takeIf { it >= 0 }
-        ?: return null
-    val nextIndex = if (forward) currentIndex + 1 else currentIndex - 1
-    return episodeVideos.getOrNull(nextIndex)
+        ?: return null to null
+    return episodeVideos.getOrNull(currentIndex - 1) to episodeVideos.getOrNull(currentIndex + 1)
 }
 
 internal fun showVoiceFallbackToast(

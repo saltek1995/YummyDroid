@@ -147,6 +147,17 @@ class YummyDroidViewModel(
 
     fun handlePlaybackEnded(video: VideoVariant) = runtime.handlePlaybackEnded(video)
 
+    fun confirmNextTitleSuggestion(requestId: Long) { runtime.confirmNextTitleSuggestion(requestId) }
+    fun dismissNextTitleSuggestion(requestId: Long) { runtime.dismissNextTitleSuggestion(requestId) }
+
+    fun updatePendingPlaybackIntent(video: VideoVariant, playWhenReady: Boolean) {
+        runtime.updatePendingPlaybackIntent(video, playWhenReady)
+    }
+
+    fun updatePendingPlaybackPosition(video: VideoVariant, positionMs: Long) {
+        runtime.updatePendingPlaybackPosition(video, positionMs)
+    }
+
     fun updatePendingRecoveryIntent(video: VideoVariant, playWhenReady: Boolean) {
         runtime.updatePendingRecoveryIntent(video, playWhenReady)
     }

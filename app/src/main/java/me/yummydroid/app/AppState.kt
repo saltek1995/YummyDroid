@@ -529,6 +529,7 @@ data class YummyDroidUiState(
     val playerStream: LoadState<ResolvedVideoStream> = LoadState.Loading,
     val playbackMetadataLoading: Boolean = false,
     val playerNotice: PlayerNotice? = null,
+    val nextTitleSuggestion: NextTitleSuggestion? = null,
     val auth: AuthUiState = AuthUiState(),
     val animeMark: LoadState<UserAnimeMark?> = LoadState.Ready(null),
     val cardAnimeMarks: Map<Long, UserAnimeMark> = emptyMap(),

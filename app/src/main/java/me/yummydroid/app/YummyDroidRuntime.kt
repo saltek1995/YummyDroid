@@ -395,6 +395,10 @@ internal class YummyDroidRuntime(
         playbackFailureReason = playerNoticeRuntime::playbackFailureReason,
         openAnime = { animeId, pushCurrent -> openAnime(animeId, pushCurrent = pushCurrent) },
         showNotice = playerNoticeRuntime::showTransientNotice,
+        loadNextAnime = { id, offline ->
+            animeDetailsLoadCoordinator.loadNextTitleDetails(id, offline) { _uiState.value }
+        },
+        cacheLoadedAnime = animeDetailsLoadCoordinator::cache,
         cachedPlaybackAnime = { id ->
             detailsRouteCache[id]?.takeIf { it.context == _uiState.value.contentContext() }
                 ?.details?.data?.toAnimeSummary()
@@ -804,6 +808,17 @@ internal class YummyDroidRuntime(
 
     fun handlePlaybackEnded(video: VideoVariant) {
         playbackActionRuntime.handlePlaybackEnded(video)
+    }
+
+    fun confirmNextTitleSuggestion(requestId: Long) { playbackActionRuntime.confirmNextTitleSuggestion(requestId) }
+    fun dismissNextTitleSuggestion(requestId: Long) { playbackActionRuntime.dismissNextTitleSuggestion(requestId) }
+
+    fun updatePendingPlaybackIntent(video: VideoVariant, playWhenReady: Boolean) {
+        playbackActionRuntime.updatePendingPlaybackIntent(video, playWhenReady)
+    }
+
+    fun updatePendingPlaybackPosition(video: VideoVariant, positionMs: Long) {
+        playbackActionRuntime.updatePendingPlaybackPosition(video, positionMs)
     }
 
     fun updatePendingRecoveryIntent(video: VideoVariant, playWhenReady: Boolean) {

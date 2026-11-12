@@ -1026,6 +1026,80 @@ class PlaybackSessionCoordinatorTest {
         } finally { harness.close() }
     }
 
+    @Test
+    fun explicitPauseAndSeekDuringPendingSelectionSurviveResolution() = runBlocking {
+        val first = video(1, 10, "CVH")
+        val pending = video(2, 10, "Kodik")
+        val release = CompletableDeferred<Unit>()
+        val harness = harness(
+            YummyDroidUiState(videos = LoadState.Ready(listOf(first, pending))),
+            resolveBestPlayback = { candidates, _, _, _ ->
+                val selected = candidates.single()
+                if (selected == pending) release.await()
+                ResolvedPlayback(selected, stream("https://stream.test/${selected.id}.m3u8"))
+            },
+        )
+        try {
+            harness.coordinator.play(request(first, lockPlaybackSource = true))
+            harness.coordinator.play(request(pending, lockPlaybackSource = true))
+            assertIs<LoadState.Loading>(harness.state.playerStream)
+
+            harness.coordinator.updatePendingPlaybackIntent(pending, false)
+            harness.coordinator.updatePendingPlaybackPosition(pending, 42_000L)
+            release.complete(Unit)
+            harness.awaitPlayerStreamSettled()
+
+            val route = assertIs<AppRoute.Player>(harness.state.route)
+            assertEquals(pending, route.video)
+            assertFalse(route.playWhenReady)
+            assertEquals(42_000L, route.startPositionMs)
+        } finally {
+            release.complete(Unit)
+            harness.close()
+        }
+    }
+
+    @Test
+    fun pendingSelectionCommandsRejectWrongVideoAndCannotMutateAfterReadyOrNavigationAway() = runBlocking {
+        val first = video(1, 10, "CVH")
+        val pending = video(2, 10, "Kodik")
+        val release = CompletableDeferred<Unit>()
+        val harness = harness(
+            YummyDroidUiState(videos = LoadState.Ready(listOf(first, pending))),
+            resolveBestPlayback = { candidates, _, _, _ ->
+                val selected = candidates.single()
+                if (selected == pending) release.await()
+                ResolvedPlayback(selected, stream("https://stream.test/${selected.id}.m3u8"))
+            },
+        )
+        try {
+            harness.coordinator.play(request(first, lockPlaybackSource = true))
+            harness.coordinator.play(request(pending, lockPlaybackSource = true))
+            val loadingRoute = assertIs<AppRoute.Player>(harness.state.route)
+            harness.coordinator.updatePendingPlaybackIntent(pending, false)
+            harness.coordinator.updatePendingPlaybackIntent(pending, true)
+            harness.coordinator.updatePendingPlaybackIntent(first, false)
+            harness.coordinator.updatePendingPlaybackPosition(first, 42_000L)
+            assertEquals(loadingRoute, harness.state.route)
+
+            release.complete(Unit)
+            harness.awaitPlayerStreamSettled()
+            val readyRoute = assertIs<AppRoute.Player>(harness.state.route)
+            harness.coordinator.updatePendingPlaybackIntent(pending, false)
+            harness.coordinator.updatePendingPlaybackPosition(pending, 42_000L)
+            assertEquals(readyRoute, harness.state.route)
+
+            harness.update { it.copy(route = AppRoute.Details(pending.animeId)) }
+            val navigated = harness.state
+            harness.coordinator.updatePendingPlaybackIntent(pending, false)
+            harness.coordinator.updatePendingPlaybackPosition(pending, 42_000L)
+            assertEquals(navigated, harness.state)
+        } finally {
+            release.complete(Unit)
+            harness.close()
+        }
+    }
+
     private fun harness(
         initialState: YummyDroidUiState,
         resolveLocalStream: suspend (VideoVariant) -> ResolvedVideoStream = { stream(it.localPlaybackUrl) },

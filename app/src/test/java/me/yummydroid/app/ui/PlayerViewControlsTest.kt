@@ -13,6 +13,45 @@ import me.yummydroid.app.sourceSelectionKey
 
 class PlayerViewControlsTest {
     @Test
+    fun availabilityUsesRangesOnlyForIncompleteGroupsAndPreservesSpecialEpisodes() {
+        fun episode(number: String, id: Long) = sourceVideo(id, "Alloha", "Voice", number, "https://example.test/$id")
+        val subset = listOf("10", "1", "3", "2", "5", "5.5", "Special").mapIndexed { index, number -> episode(number, index + 1L) }
+        assertEquals("1-3, 5, 5.5, 10, Special", subset.availableEpisodeLabel(20))
+        assertEquals("7", (subset + subset.first()).availableEpisodeLabel(7))
+        assertEquals("2", listOf(episode("1", 1), episode("10", 2)).availableEpisodeLabel(2))
+    }
+
+    @Test
+    fun incompleteVoiceShowsRangesAgainstUnionOfEntireTitle() {
+        fun episode(number: Int, voice: String) = sourceVideo(number.toLong(), "Alloha", voice, number.toString(), "https://example.test/$voice/$number")
+        val complete = (1..10).map { episode(it, "Complete") }
+        val partial = listOf(2, 3, 4, 8, 10).map { episode(it, "Partial") }
+        val options = playerVoiceSelectionOptions(
+            (complete + partial).groupBy { it.matchingVoiceKey }, null, complete.first(), defaultPlayerControlTexts,
+        )
+        assertTrue(options.first { it.key == complete.first().matchingVoiceKey }.label.endsWith("(10)"))
+        assertTrue(options.first { it.key == partial.first().matchingVoiceKey }.label.endsWith("(2-4, 8, 10)"))
+    }
+
+    @Test
+    fun localSourceCountsDistinctDownloadedEpisodesForSelectedVoice() {
+        val local = (1..3).map { episode ->
+            sourceVideo(episode.toLong(), "Alloha", "MiraiDUB", episode.toString(), "https://example.test/$episode",
+                localPlaybackUrl = "file:///episode-$episode.mp4")
+        }
+        val sameEpisodeOtherSource = sourceVideo(4, "Kodik", "MiraiDUB", "1.0", "https://example.test/duplicate",
+            localPlaybackUrl = "file:///duplicate.mp4")
+        val otherVoice = sourceVideo(5, "Alloha", "Other", "4", "https://example.test/other",
+            localPlaybackUrl = "file:///other.mp4")
+        val online = sourceVideo(6, "Alloha", "MiraiDUB", "4", "https://example.test/online")
+        val current = local.first()
+        val options = (local + sameEpisodeOtherSource + otherVoice + online)
+            .sourceOptionsFor(current, current.matchingVoiceKey)
+        assertEquals("Local (1-3)", options.first { it.key == "local" }.label)
+        assertEquals("Alloha (4)", options.first { it.key != "local" && it.video.player == "Alloha" }.label)
+    }
+
+    @Test
     fun visiblePlayerControlsDoNotRestartControllerOrChromeAnimation() {
         assertEquals(
             PlayerControlsShowPlan(showController = false, animateChrome = false),
@@ -71,7 +110,7 @@ class PlayerViewControlsTest {
         val options = listOf(current, duplicateAlloha, cvh, otherVoice, otherEpisode)
             .sourceOptionsFor(current, current.matchingVoiceKey)
 
-        assertEquals(listOf("CVH (1)", "Alloha (1)"), options.map { it.label })
+        assertEquals(listOf("CVH (2)", "Alloha (2)"), options.map { it.label })
         assertEquals(2, options.size)
         assertTrue(options.all { it.video.dubbing == "AniLibria" && it.video.episode == "2" })
     }
@@ -259,7 +298,7 @@ class PlayerViewControlsTest {
         val options = (allohaVideos + kodikVideos + otherVoiceVideos)
             .sourceOptionsFor(current, current.matchingVoiceKey)
 
-        assertEquals(listOf("Kodik (2)", "Alloha (3)"), options.map { it.label })
+        assertEquals(listOf("Kodik (1-2)", "Alloha (1-3)"), options.map { it.label })
     }
 
     @Test

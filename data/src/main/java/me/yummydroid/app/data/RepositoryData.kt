@@ -429,8 +429,17 @@ private suspend fun <T> YummyAnimeRepository.mutateAccountContent(
     }
 }
 
+internal fun YummyAnimeRepository.overlayOfflineSubscriptionGroups(
+    groups: List<List<VideoVariant>>,
+): List<List<VideoVariant>> {
+    val userId = authStorage?.readSession()?.profile?.id
+    return subscriptionState?.overlayAll(userId, groups) ?: groups.map { videos ->
+        videos.map { it.copy(subscribed = false) }
+    }
+}
+
 internal fun YummyAnimeRepository.overlayOfflineSubscriptions(videos: List<VideoVariant>): List<VideoVariant> =
-    subscriptionState?.overlay(authStorage?.readSession()?.profile?.id, videos) ?: videos.map { it.copy(subscribed = false) }
+    overlayOfflineSubscriptionGroups(listOf(videos)).single()
 
 private suspend fun YummyAnimeRepository.loadFilteredAnimePage(
     request: RepositoryContentRequest,

@@ -15,6 +15,22 @@ import me.yummydroid.app.data.VideoVariant
 
 class VideoPickerTest {
     @Test
+    fun largeTitleKeepsAllEpisodesPreferredVoiceAndViewTotals() {
+        val videos = (1..1181).flatMap { episode ->
+            (0..4).flatMap { voice ->
+                listOf("Kodik", "Alloha", "CVH").mapIndexed { source, player ->
+                    video((episode * 100 + voice * 10 + source).toLong(), player, "Voice $voice", episode.toString(), views = 1)
+                }
+            }
+        }.reversed()
+        val selected = videos.first { it.dubbing == "Voice 2" }
+        val presentation = buildVideoPickerPresentation(videos, selected.groupKey)
+        assertEquals((1..1181).map(Int::toString), presentation.displayVideos.map { it.episode })
+        assertTrue(presentation.displayVideos.all { it.groupKey == selected.groupKey })
+        assertTrue(presentation.episodeViewsByKey.values.all { it == 15L })
+    }
+
+    @Test
     fun downloadedEpisodeIndexMatchesCandidateSelectionAcrossSourcesAndEpisodeFormats() {
         val online = video(1, "CVH", "Voice A", "1")
         val downloaded = video(2, "Alloha", "Voice B", "1").copy(

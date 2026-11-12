@@ -15,6 +15,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -131,6 +132,39 @@ class SubtitlePreparationTest {
     }
 
     @Test
+    fun wrapperClosesHeldOptionalPrefetchAfterResolutionCompletes() = runBlocking {
+        val started = CompletableDeferred<Unit>()
+        val cancelled = CompletableDeferred<Unit>()
+        val track = ResolvedSubtitleTrack(
+            "https://captions.example.test/wrapper-close.vtt",
+            headers = mapOf("X-Caption" to "fixture"),
+        )
+
+        val result = withTimeout(5_000) {
+            withContext(Dispatchers.IO) {
+                coroutineScope {
+                    val preparation = SubtitlePreparation(CoroutineScope(coroutineContext)) { _, _ ->
+                        started.complete(Unit)
+                        try {
+                            awaitCancellation()
+                        } finally {
+                            cancelled.complete(Unit)
+                        }
+                    }
+                    withSubtitlePreparation(preparation) {
+                        preparation.prefetch(listOf(track))
+                        started.await()
+                        "resolved"
+                    }
+                }
+            }
+        }
+
+        assertEquals("resolved", result)
+        withTimeout(5_000) { cancelled.await() }
+    }
+
+    @Test
     fun cacheClearWhilePrefetchIsHeldPreventsItsLaterMaterializationFromPublishing() = runBlocking {
         val directory = Files.createTempDirectory("subtitle-preparation-clear").toFile()
         val started = CompletableDeferred<Unit>()
@@ -174,24 +208,26 @@ class SubtitlePreparationTest {
         val termination = WebViewSessionTermination(coroutineContext + preparation)
         val materializer = materializer(directory)
         try {
-            preparation.prefetch(listOf(track))
-            withTimeout(5_000) { fetchStarted.await() }
-            val interceptor = async(Dispatchers.IO) {
-                assertFailsWith<kotlinx.coroutines.CancellationException> {
-                    termination.runRequest {
-                        requestAwaiting.complete(Unit)
-                        withContext(preparation) { preparation.response(track.uri, headers) }
+            withSubtitlePreparation(preparation) {
+                preparation.prefetch(listOf(track))
+                withTimeout(5_000) { fetchStarted.await() }
+                val interceptor = async(Dispatchers.IO) {
+                    assertFailsWith<kotlinx.coroutines.CancellationException> {
+                        termination.runRequest {
+                            requestAwaiting.complete(Unit)
+                            preparation.response(track.uri, headers)
+                        }
                     }
                 }
-            }
-            withTimeout(5_000) { requestAwaiting.await() }
-            assertTrue(termination.tryTerminate())
-            withTimeout(5_000) { interceptor.await() }
+                withTimeout(5_000) { requestAwaiting.await() }
+                assertTrue(termination.tryTerminate())
+                withTimeout(5_000) { interceptor.await() }
 
-            release.complete(vttResponse("Surviving caption."))
-            val tracks = withContext(preparation) { materializer.validateTracks(listOf(track), emptyMap()) }
-            assertEquals(1, tracks.size)
-            assertTrue(File(URI(tracks.single().uri)).readText().contains("Surviving caption."))
+                release.complete(vttResponse("Surviving caption."))
+                val tracks = materializer.validateTracks(listOf(track), emptyMap())
+                assertEquals(1, tracks.size)
+                assertTrue(File(URI(tracks.single().uri)).readText().contains("Surviving caption."))
+            }
         } finally {
             termination.tryTerminate()
             clearSubtitleCache(directory)
@@ -226,6 +262,43 @@ class SubtitlePreparationTest {
         }
         assertEquals("resolution failed", failure.message)
         withTimeout(5_000) { fetchCancelled.await() }
+    }
+
+    @Test
+    fun wrapperFailureClosesRequestsWithoutCancellingParentOrStartingNewFetches() = runBlocking {
+        val started = CompletableDeferred<Unit>()
+        val cancelled = CompletableDeferred<Unit>()
+        var fetches = 0
+        val track = ResolvedSubtitleTrack(
+            "https://captions.example.test/wrapper-failure.vtt",
+            headers = mapOf("X-Caption" to "fixture"),
+        )
+        val preparation = SubtitlePreparation(CoroutineScope(coroutineContext)) { _, _ ->
+            fetches += 1
+            started.complete(Unit)
+            try {
+                awaitCancellation()
+            } finally {
+                cancelled.complete(Unit)
+            }
+        }
+        val expected = IOException("resolution failed")
+
+        val failure = assertFailsWith<IOException> {
+            withSubtitlePreparation(preparation) {
+                preparation.prefetch(listOf(track))
+                withTimeout(5_000) { started.await() }
+                throw expected
+            }
+        }
+
+        assertTrue(failure === expected || failure.cause === expected)
+        withTimeout(5_000) { cancelled.await() }
+        assertFailsWith<kotlinx.coroutines.CancellationException> {
+            preparation.response(track.uri, track.headers)
+        }
+        assertEquals(1, fetches)
+        assertTrue(coroutineContext[kotlinx.coroutines.Job]?.isActive == true)
     }
 
     @Test

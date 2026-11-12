@@ -33,4 +33,6 @@
     <item name="yummy_video_zoom_state_tag" type="id" />
     <item name="yummy_video_zoom_token_tag" type="id" />
     <item name="yummy_video_zoom_handler_token_tag" type="id" />
+    <item name="yummy_player_video_preparation_mask" type="id" />
+    <item name="yummy_player_control_seek_listener" type="id" />
 </resources>

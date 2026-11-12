@@ -19,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -183,13 +184,21 @@ private fun EpisodeOfflineBadge() {
 // EpisodePresentation
 @Composable
 internal fun List<VideoVariant>.downloadedEpisodeSummary(): String? {
-    val ranges = downloadedEpisodeRanges()
+    val ranges = remember(this) { downloadedEpisodeRanges() }
     return ranges.takeIf { it.isNotEmpty() }?.let { "${uiText(UiStringKey.Downloaded)}: ${it.joinToString(", ")}" }
 }
 
 internal fun List<VideoVariant>.downloadedEpisodeRanges(): List<String> =
-    filter { it.isOfflineAvailable }
-        .distinctBy { it.matchingEpisodeKey }
+    filter { it.isOfflineAvailable }.episodeNumberRanges()
+
+internal fun List<VideoVariant>.availableEpisodeLabel(totalEpisodeCount: Int): String {
+    val episodes = distinctBy { it.matchingEpisodeKey }.filter { it.matchingEpisodeKey.isNotBlank() }
+    return if (episodes.size < totalEpisodeCount) episodes.episodeNumberRanges().joinToString(", ")
+        .ifBlank { "0" } else episodes.size.toString()
+}
+
+private fun List<VideoVariant>.episodeNumberRanges(): List<String> =
+    distinctBy { it.matchingEpisodeKey }
         .map { video ->
             video.downloadEpisodeSlot().copy(
                 title = video.shortEpisodeNumberLabel(),

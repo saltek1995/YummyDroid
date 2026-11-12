@@ -9,11 +9,14 @@ import me.yummydroid.app.data.AppSettingsStorage
 import me.yummydroid.app.data.PreferredQuality
 
 // DownloadCenterController
-internal class DownloadCenterController : DownloadTaskQueue {
+internal class DownloadCenterController(
+    private val persistOverride: ((List<DownloadTaskUi>, Boolean) -> Unit)? = null,
+) : DownloadTaskQueue {
     private var nextId = 1L
     private val stopRequests = DownloadStopRequests()
     private val networkObserver = DownloadNetworkObserver()
     private var appContext: Context? = null
+    private var queuePersistence: DownloadQueuePersistence? = null
 
     private val mutableState = MutableStateFlow(DownloadQueueSnapshot())
     val state = mutableState.asStateFlow()
@@ -23,6 +26,7 @@ internal class DownloadCenterController : DownloadTaskQueue {
         val safeContext = context.applicationContext
         if (appContext == null) {
             appContext = safeContext
+            queuePersistence = DownloadQueuePersistence(write = DownloadQueueStorage(safeContext)::write)
             restoreTasks(safeContext)
         }
         networkObserver.register(safeContext) { resumeWaitingForAllowedNetwork(safeContext) }
@@ -73,17 +77,22 @@ internal class DownloadCenterController : DownloadTaskQueue {
     @Synchronized
     fun updateTaskIfUnstopped(id: Long, update: DownloadTaskUpdate): Boolean {
         var applied = false
-        updateAndPersist { snapshot ->
-            snapshot.copy(
-                tasks = snapshot.tasks.map { task ->
-                    // A resolver/transfer can finish after the UI has already accepted Pause/Cancel.
-                    if (task.id == id && !stopRequests.isStopRequested(id)) {
-                        applied = true
-                        task.applyUpdate(update)
-                    } else task
-                },
-            )
+        var progressOnly = false
+        val snapshot = mutableState.value
+        val tasks = snapshot.tasks.map { task ->
+            if (task.id != id || stopRequests.isStopRequested(id)) return@map task
+            applied = true
+            val next = task.applyUpdate(update)
+            if (next.copy(updatedAtMs = task.updatedAtMs) == task) return@map task
+            progressOnly = task.state == DownloadTaskState.Running && next.copy(
+                progress = task.progress, downloadedBytes = task.downloadedBytes,
+                totalBytes = task.totalBytes, bytesPerSecond = task.bytesPerSecond,
+                updatedAtMs = task.updatedAtMs,
+            ) == task
+            next
         }
+        publishAndPersist(snapshot.copy(tasks = tasks), progressOnly)
+
         return applied
     }
 
@@ -237,14 +246,16 @@ internal class DownloadCenterController : DownloadTaskQueue {
     private fun updateAndPersist(
         transform: (DownloadQueueSnapshot) -> DownloadQueueSnapshot,
     ) {
-        val transformed = transform(mutableState.value)
-        mutableState.value = transformed.copy(tasks = transformed.tasks.cappedDownloadTasks())
-        persist()
+        publishAndPersist(transform(mutableState.value))
     }
 
-    private fun persist() {
-        val context = appContext ?: return
-        DownloadQueueStorage(context).write(state.value.tasks)
+    private fun publishAndPersist(transformed: DownloadQueueSnapshot, progressOnly: Boolean = false) {
+        if (transformed == mutableState.value) return
+        val next = transformed.copy(tasks = transformed.tasks.cappedDownloadTasks())
+        mutableState.value = next
+        val override = persistOverride
+        if (override != null) override(next.tasks, progressOnly)
+        else queuePersistence?.submit(next.tasks, progressOnly)
     }
 
     private fun localizedText(resId: Int): String {

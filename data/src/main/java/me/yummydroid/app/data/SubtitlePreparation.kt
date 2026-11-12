@@ -3,6 +3,8 @@ package me.yummydroid.app.data
 import java.util.Locale
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +22,7 @@ internal class SubtitlePreparation(
     private val requests = mutableMapOf<RequestKey, Deferred<HttpResponseSnapshot?>>()
     // Preserve sequential optional requests and stop the queue on the first restriction.
     private var previousRequest: Deferred<HttpResponseSnapshot?>? = null
+    private var closed = false
 
     fun prefetch(tracks: List<ResolvedSubtitleTrack>) {
         tracks.filter { track ->
@@ -35,8 +38,18 @@ internal class SubtitlePreparation(
     fun contains(uri: String, headers: Map<String, String>): Boolean =
         requests.containsKey(RequestKey(uri, headers.mapKeys { it.key.lowercase(Locale.ROOT) }))
 
+    fun close() {
+        val pending = synchronized(this) {
+            if (closed) return
+            closed = true
+            requests.values.toList().also { requests.clear(); previousRequest = null }
+        }
+        pending.forEach { it.cancel() }
+    }
+
     @Synchronized
     private fun request(uri: String, headers: Map<String, String>): Deferred<HttpResponseSnapshot?> {
+        if (closed) throw CancellationException("Subtitle preparation has finished")
         val key = RequestKey(uri, headers.mapKeys { it.key.lowercase(Locale.ROOT) })
         return requests.getOrPut(key) {
             val previous = previousRequest
@@ -53,3 +66,12 @@ internal class SubtitlePreparation(
         }
     }
 }
+
+
+/** Required postprocessing finishes first; speculative browser-only children cannot delay return. */
+internal suspend fun <T> withSubtitlePreparation(preparation: SubtitlePreparation?, block: suspend () -> T): T =
+    try {
+        withContext(preparation ?: kotlin.coroutines.EmptyCoroutineContext) { block() }
+    } finally {
+        preparation?.close()
+    }

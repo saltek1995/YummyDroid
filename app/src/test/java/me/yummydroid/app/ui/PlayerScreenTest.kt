@@ -15,13 +15,29 @@ import me.yummydroid.app.data.withoutLocalPlayback
 
 class PlayerScreenTest {
     @Test
+    fun pendingEpisodeUsesRequestedNeighborsAndErrorKeepsTheLoadedController() {
+        val first = video(1L, 10L).copy(episode = "1", index = 1)
+        val second = first.copy(id = 2L, episode = "2", index = 2)
+        val third = first.copy(id = 3L, episode = "3", index = 3)
+        val retained = RetainedReadyPlayback(stream("working"), first, 0L, PreferredQuality.Auto)
+        for (state in listOf(LoadState.Loading, LoadState.Error("Failed replacement"))) {
+            val pending = presentation(second, state, retained, listOf(first, second, third))
+            assertTrue(pending.useRetainedPlayback)
+            assertEquals(first, pending.playbackVideo)
+            assertEquals(second, pending.selectedVideo)
+            assertEquals(first, pending.previousVideo)
+            assertEquals(third, pending.nextVideo)
+        }
+    }
+
+    @Test
     fun downloadedEpisodeHasOneLocalSourceAndSeparateOnlineSources() {
         val downloaded = video(id = 1L, animeId = 10L, offline = true)
         val otherSource = downloaded.copy(id = 2L, player = "Kodik", url = "https://kodik.test/episode-1")
         val videos = listOf(downloaded, otherSource)
         val local = presentation(downloaded, LoadState.Ready(stream("local")), null, videos)
 
-        assertEquals(listOf("Local", "CVH (1)", "Kodik (1)"), local.sourceOptions.map { it.label })
+        assertEquals(listOf("Local (1)", "CVH (1)", "Kodik (1)"), local.sourceOptions.map { it.label })
         assertEquals(local.sourceOptions.first().key, local.selectedSourceKey)
         assertTrue(local.sourceOptions.first().video.isOfflineAvailable)
         assertTrue(local.sourceOptions.drop(1).none { it.video.isOfflineAvailable })
@@ -203,7 +219,7 @@ class PlayerScreenTest {
 
         assertEquals(listOf(offline), presentation.videos)
         assertEquals(1, presentation.sourceOptions.size)
-        assertEquals("Local", presentation.sourceOptions.single().label)
+        assertEquals("Local (1)", presentation.sourceOptions.single().label)
     }
 
     private fun presentation(

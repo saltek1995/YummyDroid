@@ -9,6 +9,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
@@ -66,9 +67,11 @@ class PausedPlaybackSelectionTest {
                             val runtime = rememberNativeVideoPlayerRuntimeSession(current.value)
                             BindNativeVideoPlayerRuntimeEffects(current.value, runtime)
                             AndroidView(
+                                modifier = Modifier.fillMaxSize().nativeVideoPresentation(runtime),
                                 factory = { context -> themedPlayerView(context) },
                                 update = { playerView ->
-                                    playerView.player = runtime.playbackPlayer
+                                    playerView.player = runtime.displayModePlayer
+                                    runtime.playerView.value = playerView
                                     playerView.useController = false
                                     playerView.bindYummyController(
                                         createNativeVideoPlayerControllerBinding(

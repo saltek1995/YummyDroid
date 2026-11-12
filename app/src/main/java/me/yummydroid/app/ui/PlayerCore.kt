@@ -446,7 +446,8 @@ internal class ReusableVideoPlayer internal constructor(
         playWhenReady: Boolean,
     ) {
         updateProviderState()
-        targetPlayer.recordPlaybackLoad(activeStream, stream)
+        // Diagnostics are attached to the owned ExoPlayer, while the target can be a display/cast wrapper.
+        player.recordPlaybackLoad(activeStream, stream)
         val previousStream = activeStream
         activeStream = stream
         val previousSession = try {

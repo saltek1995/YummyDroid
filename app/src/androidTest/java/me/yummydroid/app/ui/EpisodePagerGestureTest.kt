@@ -28,15 +28,19 @@ import org.junit.runner.RunWith
 class EpisodePagerGestureTest {
     @get:Rule val compose = createComposeRule()
     private lateinit var pager: PagerState
+    private lateinit var controller: AppNavigationController
 
     private fun showPager() {
         compose.setContent {
-            CompositionLocalProvider(LocalAppNavigationController provides remember { AppNavigationController() }) {
+            controller = remember { AppNavigationController() }
+            CompositionLocalProvider(LocalAppNavigationController provides controller) {
                 YummyDroidTheme {
                     var listKey by remember { mutableIntStateOf(0) }
                     var requestedPage by remember(listKey) { mutableIntStateOf(0) }
                     var pageRequest by remember(listKey) { mutableStateOf<EpisodePageRequest?>(EpisodePageRequest(0)) }
                     var width by remember { mutableStateOf(400.dp) }
+                    var pointerDown by remember { mutableStateOf(false) }
+                    val onPointerDown = remember { { down: Boolean -> pointerDown = down } }
                     val layout = episodeGridLayout(width, 40, requestedPage)
                     pager = rememberPagerState { layout.pageCount }
                     EpisodeGridEffects(
@@ -54,11 +58,12 @@ class EpisodePagerGestureTest {
                         onPageRequestHandled = { if (pageRequest === it) pageRequest = null },
                         onPagerSettled = { requestedPage = it },
                         onPendingFocusHandled = {},
+                        pointerDown = pointerDown,
                     )
                     Column {
                         HorizontalPager(
                             state = pager,
-                            modifier = Modifier.fillMaxWidth().height(240.dp).testTag("episodes"),
+                            modifier = Modifier.fillMaxWidth().height(240.dp).testTag("episodes").episodePagerPointerInput(onPointerDown),
                         ) { Text("Page $it") }
                         Button(onClick = { requestedPage++; pageRequest = EpisodePageRequest(requestedPage) }, modifier = Modifier.testTag("next")) {
                             Text("Next")
@@ -195,6 +200,34 @@ class EpisodePagerGestureTest {
             assertTrue(pager.settledPage in 0 until pager.pageCount)
             assertEquals(0f, pager.currentPageOffsetFraction, .001f)
         }
+    }
+
+    @Test fun cancelledButtonAnimationRecoversWithoutAnotherNavigationRequest() {
+        showPager()
+        compose.onNodeWithTag("next").performClick()
+        compose.mainClock.advanceTimeBy(64)
+        compose.runOnUiThread {
+            assertTrue(kotlin.math.abs(pager.currentPageOffsetFraction) > .001f)
+            controller.recordPointerInput()
+        }
+        compose.mainClock.advanceTimeBy(2000)
+        compose.runOnIdle {
+            assertTrue(!pager.isScrollInProgress)
+            assertEquals(0f, pager.currentPageOffsetFraction, .001f)
+        }
+        compose.onNodeWithTag("selected").assertTextEquals("Selected ${pager.settledPage}")
+    }
+
+    @Test fun rapidAlternatingButtonsAlwaysFinishCentered() {
+        showPager()
+        repeat(12) {
+            compose.onNodeWithTag("next").performClick()
+            compose.mainClock.advanceTimeBy(32)
+            compose.onNodeWithTag("previous").performClick()
+            compose.mainClock.advanceTimeBy(16)
+        }
+        compose.mainClock.advanceTimeBy(2000)
+        assertAtPage(0)
     }
 
     private fun assertAtPage(page: Int) {

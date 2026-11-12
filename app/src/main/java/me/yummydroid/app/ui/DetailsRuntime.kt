@@ -102,13 +102,13 @@ internal fun PlaybackProgress?.resolveResumeTarget(
 ): HeroResumeTarget? {
     val progress = this ?: return null
     if (progress.positionMs <= 0L || videos.isEmpty()) return null
+    val safePosition = progress.safeResumePositionMs() ?: return null
     val video = videos.firstOrNull { candidate ->
         candidate.matchesPlaybackProgress(progress, requireGroup = true)
     } ?: videos.firstOrNull { candidate ->
         candidate.matchesPlaybackProgress(progress, requireGroup = false)
     } ?: return null
 
-    val safePosition = progress.safeResumePositionMs() ?: return null
     return HeroResumeTarget(video, safePosition)
 }
 
@@ -117,9 +117,19 @@ internal fun Iterable<PlaybackProgress>.resolveLatestResumeTarget(
     preferredGroupKey: String? = null,
 ): HeroResumeTarget? {
     if (videos.isEmpty()) return null
+    // Keep the usual newest-history fast path; index only after repeated failed full scans.
+    var fullScanMisses = 0
+    var index: ResumeVideoIndex? = null
     val target = asSequence()
         .sortedByDescending { progress -> progress.updatedAtMs }
-        .mapNotNull { progress -> progress.resolveResumeTarget(videos) }
+        .mapNotNull { progress ->
+            if (progress.positionMs <= 0L || progress.safeResumePositionMs() == null) return@mapNotNull null
+            val candidates = if (fullScanMisses < 2) videos else {
+                val prepared = index ?: ResumeVideoIndex(videos).also { index = it }
+                prepared.candidates(progress)
+            }
+            progress.resolveResumeTarget(candidates).also { if (it == null) fullScanMisses++ }
+        }
         .firstOrNull()
         ?: return null
     val preferredVideo = preferredGroupKey
@@ -130,6 +140,36 @@ internal fun Iterable<PlaybackProgress>.resolveLatestResumeTarget(
                 .firstOrNull { video -> video.isSameEpisodeAs(target.video) }
         }
     return target.copy(video = preferredVideo ?: target.video)
+}
+
+/** Candidate narrowing only: the original two-pass matcher still decides which video wins. */
+internal class ResumeVideoIndex(private val videos: List<VideoVariant>) {
+    private val ids = mutableMapOf<Long, MutableList<Int>>()
+    private val text = mutableMapOf<String, MutableList<Int>>()
+    private val numbers = mutableMapOf<Double, MutableList<Int>>()
+
+    init {
+        videos.forEachIndexed { index, video ->
+            if (video.id > 0L) ids.getOrPut(video.id) { mutableListOf() }.add(index)
+            val aliases = setOf(video.episode.trim(), video.matchingEpisodeKey.trim()).filter(String::isNotEmpty)
+            aliases.forEach { text.getOrPut(it) { mutableListOf() }.add(index) }
+            aliases.mapNotNull(::numberKey).distinct().forEach { numbers.getOrPut(it) { mutableListOf() }.add(index) }
+        }
+    }
+
+    fun candidates(progress: PlaybackProgress): List<VideoVariant> {
+        val positions = sortedSetOf<Int>()
+        if (progress.videoId > 0L) positions.addAll(ids[progress.videoId].orEmpty())
+        val episode = progress.episode.trim()
+        if (episode.isNotEmpty()) {
+            positions.addAll(text[episode].orEmpty())
+            numberKey(episode)?.let { positions.addAll(numbers[it].orEmpty()) }
+        }
+        return positions.map(videos::get)
+    }
+
+    private fun numberKey(value: String): Double? = value.replace(',', '.').toDoubleOrNull()
+        ?.let { if (it == 0.0) 0.0 else it }
 }
 
 internal fun List<PlaybackProgress>.progressFor(video: VideoVariant): PlaybackProgress? {
@@ -550,13 +590,14 @@ internal fun resolveDetailsFocusLayout(
     commentsExpanded: Boolean,
 ): DetailsFocusLayout {
     val extras = (detailsExtras as? LoadState.Ready)?.data
-    val subscriptionCount = if (forcedOfflineMode) {
+    val subscriptionCount = if (forcedOfflineMode || auth.profile == null || !details.canShowVideoSubscriptions()) {
         0
     } else {
         detailsSubscriptionFocusItemCount(
-            isAuthorized = auth.profile != null,
+            isAuthorized = true,
             videoCount = readyVideos.size,
-            voiceGroupCount = readyVideos.detailsSubscriptionSourceGroups().size,
+            voiceGroupCount = if (subscriptionsExpanded) readyVideos.detailsSubscriptionSourceGroups().size
+                else if (readyVideos.any { it.matchingVoiceKey.isNotBlank() }) 1 else 0,
             allowSubscriptions = details.canShowVideoSubscriptions(),
             expanded = subscriptionsExpanded,
         )

@@ -459,7 +459,7 @@ internal class VideoStreamResolveRuntime(
             val subtitlePreparation = if (video.url.isAllohaIframeUrl() && policy is PlaybackResolveRequestPolicy) {
                 SubtitlePreparation(CoroutineScope(currentCoroutineContext()), providerStreamResolver::getResponse)
             } else null
-            withContext(subtitlePreparation ?: kotlin.coroutines.EmptyCoroutineContext) {
+            withSubtitlePreparation(subtitlePreparation) {
                 val stream = resolveInternal(video, preferredQuality, waitForRuntimeSubtitles, siteBaseUrls)
                 val streamReadyNanos = System.nanoTime()
                 val processed = streamPostProcessor.process(

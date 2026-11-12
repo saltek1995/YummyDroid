@@ -5,6 +5,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
@@ -54,17 +55,19 @@ class NativeRuntimeLoadTest {
                     if (visible.value) {
                         val runtimeSession = rememberNativeVideoPlayerRuntimeSession(current.value)
                         BindNativeVideoPlayerRuntimeEffects(current.value, runtimeSession)
-                        AndroidView(factory = { context -> PlayerView(context).apply {
-                            player = runtimeSession.playbackPlayer
+                        AndroidView(modifier = Modifier.fillMaxSize().nativeVideoPresentation(runtimeSession),
+                            factory = { context -> PlayerView(context).apply {
+                            player = runtimeSession.displayModePlayer
                             useController = false
-                        } })
+                        } }, update = { runtimeSession.playerView.value = it })
                         SideEffect { session = runtimeSession }
                     }
                 }
             }
             compose.waitUntil(20_000) { onMain { loadRequests(session?.player) == 1L } }
             val initialPlayer = onMain { requireNotNull(session).player }
-            assertSame(initialPlayer, onMain { requireNotNull(session).playbackPlayer })
+            val initialPlaybackPlayer = onMain { requireNotNull(session).playbackPlayer }
+            assertTrue(onMain { !requireNotNull(session).castSession.isRemotePlayback.value })
 
             compose.runOnIdle { current.value = current.value.copy(playWhenReady = true) }
             compose.waitUntil(40_000) { onMain { initialPlayer.isPlaying } &&
@@ -85,6 +88,7 @@ class NativeRuntimeLoadTest {
             }
             compose.waitForIdle()
             assertSame(initialPlayer, onMain { requireNotNull(session).player })
+            assertSame(initialPlaybackPlayer, onMain { requireNotNull(session).playbackPlayer })
             assertEquals(1L, onMain { loadRequests(initialPlayer) })
 
             compose.runOnIdle {

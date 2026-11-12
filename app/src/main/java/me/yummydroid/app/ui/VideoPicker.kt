@@ -1,6 +1,8 @@
 package me.yummydroid.app.ui
 
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -37,11 +39,18 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlin.math.abs
 import me.yummydroid.app.data.PlaybackProgress
 import me.yummydroid.app.data.VideoVariant
 import me.yummydroid.app.data.downloadPlanVoiceKey
@@ -182,6 +191,7 @@ internal fun EpisodeGridEffects(
     onPageRequestHandled: (EpisodePageRequest) -> Unit,
     onPagerSettled: (Int) -> Unit,
     onPendingFocusHandled: () -> Unit,
+    pointerDown: Boolean = false,
 ) {
     EpisodeGridPageAlignmentEffect(
         requestedPage = requestedPage,
@@ -191,6 +201,7 @@ internal fun EpisodeGridEffects(
         onRequestedPageChange = onRequestedPageChange,
         onPageRequestHandled = onPageRequestHandled,
     )
+    EpisodeGridIdleAlignmentEffect(pagerState, pageRequest, pointerDown)
     EpisodeGridFocusRestoreEffect(
         layout = layout,
         pagerState = pagerState,
@@ -207,6 +218,50 @@ internal fun EpisodeGridEffects(
         onPagerSettled = onPagerSettled,
     )
 }
+
+@Composable
+private fun EpisodeGridIdleAlignmentEffect(
+    pagerState: PagerState,
+    pageRequest: EpisodePageRequest?,
+    pointerDown: Boolean,
+) {
+    val layerEnabled = LocalUiControlEffectsEnabled.current
+    LaunchedEffect(pagerState, pageRequest, pointerDown, layerEnabled) {
+        if (pageRequest != null || pointerDown || !layerEnabled) return@LaunchedEffect
+        snapshotFlow {
+            !pagerState.isScrollInProgress && abs(pagerState.currentPageOffsetFraction) > .001f
+        }.collect { needsAlignment ->
+            if (!needsAlignment) return@collect
+            // A new gesture or request cancels this effect. Repair only after scrolling stops.
+            do {
+                withFrameNanos { }
+                snapshotFlow { !pagerState.isScrollInProgress }.first { it }
+                if (abs(pagerState.currentPageOffsetFraction) <= .001f) break
+                try {
+                    pagerState.animateScrollToPage(pagerState.currentPage)
+                } catch (_: CancellationException) {
+                    currentCoroutineContext().ensureActive()
+                }
+                // Do not depend on a second identical snapshotFlow emission after cancellation.
+            } while (abs(pagerState.currentPageOffsetFraction) > .001f)
+        }
+    }
+}
+
+internal fun Modifier.episodePagerPointerInput(onPointerDown: (Boolean) -> Unit): Modifier =
+    pointerInput(onPointerDown) {
+        awaitEachGesture {
+            awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            onPointerDown(true)
+            try {
+                do {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                } while (event.changes.any { it.pressed })
+            } finally {
+                onPointerDown(false)
+            }
+        }
+    }
 
 @Composable
 private fun EpisodeGridPageAlignmentEffect(
@@ -255,7 +310,7 @@ private fun EpisodeGridFocusRestoreEffect(
         targetPage = layout.normalizedPage,
         settledPage = pagerState.settledPage,
         scrollInProgress = pagerState.isScrollInProgress,
-    )
+    ) && abs(pagerState.currentPageOffsetFraction) <= .001f
     UiControlEffect(
         layout.normalizedPage,
         pendingFocusSlot,
@@ -290,7 +345,7 @@ private fun EpisodeGridSettledEffect(
     LaunchedEffect(pagerState, pageCount) {
         snapshotFlow {
             pagerState.settledPage.coerceIn(0, pageCount - 1)
-                .takeUnless { pagerState.isScrollInProgress || latestPageRequest != null }
+                .takeUnless { pagerState.isScrollInProgress || latestPageRequest != null || abs(pagerState.currentPageOffsetFraction) > .001f }
         }
             .filterNotNull()
             .collect { page ->
@@ -336,7 +391,7 @@ internal fun buildVideoPickerPresentation(
     // The details grid covers every available episode, even when the preferred voice is incomplete.
     val displayVideos = videos.groupBy(VideoVariant::matchingEpisodeKey)
         .values
-        .map { variants -> variants.sortedForPlayer(selectedSourceKey, selectedVoiceKey).first() }
+        .map { variants -> variants.preferredEpisodeVariant(selectedSourceKey, selectedVoiceKey)!! }
         .sortedForPlayer()
     val episodeViewsByKey = videos
         .distinctBy(VideoVariant::id)
@@ -434,6 +489,8 @@ internal fun EpisodeGrid(
         mutableStateOf<EpisodePageRequest?>(EpisodePageRequest(0))
     }
     var pendingFocusSlot by remember(stateResetKey, displayVideos.size) { mutableStateOf<Int?>(null) }
+    var pointerDown by remember { mutableStateOf(false) }
+    val onPointerDown = remember { { down: Boolean -> pointerDown = down } }
     val previousPageFocusRequester = remember { FocusRequester() }
     val nextPageFocusRequester = remember { FocusRequester() }
 
@@ -511,6 +568,7 @@ internal fun EpisodeGrid(
                 episodePage = page
             },
             onPendingFocusHandled = { pendingFocusSlot = null },
+            pointerDown = pointerDown,
         )
         EpisodeGridPager(
             allVideos = allVideos,
@@ -533,6 +591,7 @@ internal fun EpisodeGrid(
                 onPlayVideoWithResumeChoice = onPlayVideoWithResumeChoice,
             ),
             onPageSelected = { page, focusSlot -> changePage(page, focusSlot) },
+            onPointerDown = onPointerDown,
         )
     }
 }
@@ -573,6 +632,7 @@ internal fun EpisodeGridPager(
     focusBinding: EpisodeGridFocusBinding,
     playbackBinding: EpisodePlaybackBinding,
     onPageSelected: (page: Int, focusSlot: Int?) -> Unit,
+    onPointerDown: (Boolean) -> Unit = {},
 ) {
     val downloadedVariantsByEpisode = remember(allVideos) {
         indexDownloadedEpisodeVariants(allVideos)
@@ -590,7 +650,8 @@ internal fun EpisodeGridPager(
             verticalAlignment = Alignment.Top,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(layout.pageContentHeight),
+                .height(layout.pageContentHeight)
+                .episodePagerPointerInput(onPointerDown),
         ) { page ->
             EpisodeGridPage(
                 page = page,

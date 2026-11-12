@@ -48,6 +48,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import me.yummydroid.app.InputAction
+import me.yummydroid.app.NextTitleSuggestion
 import me.yummydroid.app.LoadState
 import me.yummydroid.app.PlaybackFailure
 import me.yummydroid.app.R
@@ -79,7 +80,7 @@ internal fun PlayerScreen(
     val retainedReadyPlayback = rememberRetainedReadyPlayback(state, resumeChoicePosition)
     val presentation = rememberPlayerScreenPresentation(state, retainedReadyPlayback, resumeChoicePosition)
     val controlFocus = rememberPlayerControlFocusBinding(presentation.useRetainedPlayback)
-    PlayerResumeInputEffect(resumeChoicePosition?.takeIf { state.interactive }, actions)
+    PlayerDialogInputEffect(resumeChoicePosition?.takeIf { state.interactive }, state.nextTitleSuggestion?.requestId?.takeIf { state.interactive }, actions)
 
     CompositionLocalProvider(LocalPlayerViewContent provides rememberPlayerViewContent()) {
         PlayerScreenContent(
@@ -125,7 +126,11 @@ private fun rememberPlayerScreenPresentation(
     resumeChoicePositionMs: Long?,
 ): PlayerScreenPresentation {
     val sourceSubtitleLabel = uiText(UiStringKey.HasSubtitles)
-    return remember(state, retainedReadyPlayback, resumeChoicePositionMs, sourceSubtitleLabel) {
+    return remember(
+        state.video, state.startPositionMs, state.preferredQuality, state.allVideos,
+        state.selectedGroup, state.streamState, state.forcedOfflineMode,
+        retainedReadyPlayback, resumeChoicePositionMs, sourceSubtitleLabel,
+    ) {
         buildPlayerScreenPresentation(
             video = state.video,
             startPositionMs = state.startPositionMs,
@@ -178,18 +183,20 @@ internal class PlayerControlFocusState {
 }
 
 @Composable
-private fun PlayerResumeInputEffect(
+private fun PlayerDialogInputEffect(
     resumeChoicePositionMs: Long?,
+    nextTitleRequestId: Long?,
     actions: PlayerScreenActions,
 ) {
-    val latestOnBack by rememberUpdatedState(actions.onBack)
-    DisposableEffect(resumeChoicePositionMs, actions.onRegisterModalInputActionHandler) {
-        if (resumeChoicePositionMs == null) {
+    val latestActions by rememberUpdatedState(actions)
+    DisposableEffect(resumeChoicePositionMs, nextTitleRequestId, actions.onRegisterModalInputActionHandler) {
+        if (resumeChoicePositionMs == null && nextTitleRequestId == null) {
             actions.onRegisterModalInputActionHandler(null)
         } else {
             actions.onRegisterModalInputActionHandler { action ->
                 if (action != InputAction.Back) return@onRegisterModalInputActionHandler false
-                latestOnBack()
+                if (nextTitleRequestId != null && resumeChoicePositionMs == null) latestActions.onDismissNextTitle(nextTitleRequestId)
+                else latestActions.onBack()
                 true
             }
         }
@@ -265,7 +272,7 @@ internal fun PlayerShellPane(
 
 @Composable
 @OptIn(UnstableApi::class)
-private fun rememberPlayerControlInsets(player: PlayerView?): Pair<Dp, Dp>? {
+internal fun rememberPlayerControlInsets(player: PlayerView?): Pair<Dp, Dp>? {
     var measured by remember(player) { mutableStateOf<Pair<Int, Int>?>(null) }
     val density = LocalDensity.current
     DisposableEffect(player) {
@@ -541,6 +548,7 @@ internal fun buildPlayerScreenPresentation(
         forcedOfflineMode = forcedOfflineMode,
     )
 
+    val adjacent = findAdjacentPlayerVideos(video, videos, video.groupKey)
     return PlayerScreenPresentation(
         playbackStream = playback.stream,
         playbackVideo = playback.video,
@@ -554,18 +562,8 @@ internal fun buildPlayerScreenPresentation(
         // Menus track the pending request even while the previous stream is retained.
         // Otherwise selecting that previous source is discarded as a no-op.
         selectedSourceKey = video.sourceSelectionKey,
-        previousVideo = findAdjacentPlayerVideo(
-            currentVideo = playback.video,
-            allVideos = videos,
-            selectedGroup = selectedGroup,
-            forward = false,
-        ),
-        nextVideo = findAdjacentPlayerVideo(
-            currentVideo = playback.video,
-            allVideos = videos,
-            selectedGroup = selectedGroup,
-            forward = true,
-        ),
+        previousVideo = adjacent.first,
+        nextVideo = adjacent.second,
         useRetainedPlayback = playback.retained,
     )
 }
@@ -600,7 +598,7 @@ private fun shouldUseRetainedPlayback(
     retainedReadyPlayback: RetainedReadyPlayback?,
     resumeChoicePositionMs: Long?,
 ): Boolean {
-    if (streamState != LoadState.Loading) return false
+    if (streamState is LoadState.Ready) return false
     if (resumeChoicePositionMs != null) return false
     return retainedReadyPlayback?.video?.animeId == requestedVideo.animeId
 }
@@ -748,6 +746,7 @@ internal data class PlayerScreenState(
     val forcedOfflineMode: Boolean,
     val allowSubscriptions: Boolean,
     val canUsePictureInPicture: Boolean,
+    val nextTitleSuggestion: NextTitleSuggestion? = null,
 )
 
 internal data class PlayerScreenActions(
@@ -763,6 +762,10 @@ internal data class PlayerScreenActions(
     val onPlaybackProgress: (VideoVariant, Long, Long) -> Unit,
     val onPlaybackSeek: (VideoVariant, Long) -> Unit = { _, _ -> },
     val onPlaybackIntentChanged: (VideoVariant, Boolean) -> Unit = { _, _ -> },
+    val onPlayerControlIntentChanged: (VideoVariant, Boolean) -> Unit = { _, _ -> },
+    val onPlayerControlSeek: (VideoVariant, Long) -> Unit = { _, _ -> },
+    val onConfirmNextTitle: (Long) -> Unit = {},
+    val onDismissNextTitle: (Long) -> Unit = {},
     val onEnterPictureInPicture: () -> Unit,
     val onSettingsChange: (AppSettings) -> Unit,
     val onBack: () -> Unit,
@@ -816,6 +819,15 @@ internal fun PlayerScreenContent(
                 onDismiss = actions.onBack,
             )
         }
+        if (state.interactive && resumeChoicePositionMs == null) {
+            state.nextTitleSuggestion?.let { suggestion ->
+                PlayerNextTitleDialog(
+                    suggestion,
+                    onConfirm = { actions.onConfirmNextTitle(suggestion.requestId) },
+                    onDismiss = { actions.onDismissNextTitle(suggestion.requestId) },
+                )
+            }
+        }
     }
 }
 @Composable
@@ -831,6 +843,11 @@ private fun ReadyPlayerContent(
         animeTitle = state.animeTitle,
         currentVideo = presentation.playbackVideo,
         selectedVideo = presentation.selectedVideo,
+        selectionPositionMs = state.startPositionMs.takeIf { presentation.useRetainedPlayback },
+        playbackError = (state.streamState as? LoadState.Error)?.message,
+        onRetry = actions.onRetry,
+        onPlayerControlIntentChanged = actions.onPlayerControlIntentChanged,
+        onPlayerControlSeek = actions.onPlayerControlSeek,
         interactive = state.interactive,
         settings = state.settings,
         startPositionMs = presentation.playbackStartPositionMs,
@@ -1076,4 +1093,25 @@ internal fun PlayerView.clearActiveSkipPrompt(markDismissed: Boolean) {
         hideController()
         setPlayerControlChromeAlpha(0f)
     }
+}
+
+
+@Composable
+internal fun PlayerNextTitleDialog(suggestion: NextTitleSuggestion, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    val focus = remember(suggestion.requestId) { FocusRequester() }
+    val inputMode = LocalInputModeManager.current
+    UiControlEffect(suggestion.requestId, inputMode.inputMode, enabled = inputMode.inputMode != InputMode.Touch) {
+        withFrameNanos { }
+        focus.requestFocusSafely()
+    }
+    AlertDialog(
+        modifier = Modifier.yummyDialogMotion(),
+        onDismissRequest = onDismiss,
+        title = { Text(uiText(R.string.ui_next_title_prompt)) },
+        text = { Text(suggestion.title, style = MaterialTheme.typography.titleMedium) },
+        confirmButton = {
+            DialogActionButton(uiText(R.string.ui_next_title_watch), primary = true, modifier = Modifier.focusRequester(focus), onClick = onConfirm)
+        },
+        dismissButton = { DialogActionButton(uiText(R.string.ui_next_title_later), onClick = onDismiss) },
+    )
 }

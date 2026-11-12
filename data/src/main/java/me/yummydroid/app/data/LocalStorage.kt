@@ -57,10 +57,16 @@ class AccountVideoSubscriptionStorage internal constructor(private val prefs: Sh
         }
     }
 
-    fun overlay(userId: Long?, videos: List<VideoVariant>): List<VideoVariant> = synchronized(Lock) {
+    fun overlay(userId: Long?, videos: List<VideoVariant>): List<VideoVariant> =
+        overlayAll(userId, listOf(videos)).single()
+
+    fun overlayAll(userId: Long?, videoGroups: List<List<VideoVariant>>): List<List<VideoVariant>> = synchronized(Lock) {
         val state = userId?.takeIf { it > 0 }?.let(::read) ?: AccountVideoSubscriptionSnapshot()
-        videos.map { video -> video.copy(subscribed = state.pending[video.id]
-            ?: state.records.lastOrNull { it.matches(video) }?.subscribed ?: false) }
+        val recordsByAnime = state.records.groupBy(AccountVideoSubscriptionRecord::animeId)
+        videoGroups.map { videos ->
+            videos.map { video -> video.copy(subscribed = state.pending[video.id]
+                ?: recordsByAnime[video.animeId]?.lastOrNull { it.matches(video) }?.subscribed ?: false) }
+        }
     }
 
     private fun update(userId: Long, transform: (AccountVideoSubscriptionSnapshot) -> AccountVideoSubscriptionSnapshot) {

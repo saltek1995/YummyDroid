@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -48,6 +49,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -1254,12 +1257,13 @@ internal fun DetailsHeroProgressSummary(
 @Composable
 internal fun HeroRatingBadge(
     rating: Double,
+    userRating: Int? = null,
     enabled: Boolean,
     onClick: () -> Unit,
     heroFocusGridState: VisualFocusGridState?,
 ) {
     val shape = RoundedCornerShape(8.dp)
-    val ratingColor = ratingColorForSiteScale(rating)
+    val ratingColor = if (userRating != null) YummyColors.watched else ratingColorForSiteScale(rating)
     val textStyle = MaterialTheme.typography.headlineSmall.withoutFontPadding()
     val focusModifier = if (enabled && heroFocusGridState != null) {
         Modifier.visualFocusGridItem(
@@ -1276,17 +1280,19 @@ internal fun HeroRatingBadge(
     Surface(
         modifier = Modifier
             .then(focusModifier)
+            .semantics { contentDescription = ratingAccessibilityDescription(formatRating(rating), userRating) }
             .then(if (enabled) Modifier.dpadClickable(shape, onClick) else Modifier),
         shape = shape,
-        color = Color.Transparent,
+        color = if (userRating != null) ratingColor.copy(alpha = .15f) else Color.Transparent,
+        border = if (userRating != null) BorderStroke(1.dp, ratingColor) else null,
         contentColor = ratingColor,
     ) {
         Row(
-            modifier = Modifier.height(36.dp),
+            modifier = Modifier.height(36.dp).padding(horizontal = if (userRating != null) 6.dp else 0.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(5.dp),
         ) {
-            Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(25.dp))
+            Icon(if (userRating != null) Icons.Default.Star else Icons.Outlined.StarOutline, contentDescription = null, modifier = Modifier.size(25.dp))
             Text(
                 text = formatRating(rating),
                 style = textStyle,
@@ -1426,6 +1432,7 @@ internal fun DetailsHeroRatingAndStats(
     )
     DetailsHeroMetrics(
         details = details,
+        userRating = if (ratingSummary != null) ratingSummary.userRating else details.userRating,
         canRate = canRate,
         compact = compact,
         heroFocusGridState = heroFocusGridState,
@@ -1447,6 +1454,7 @@ internal fun DetailsHeroRatingAndStats(
 @Composable
 private fun DetailsHeroMetrics(
     details: AnimeDetails,
+    userRating: Int?,
     canRate: Boolean,
     compact: Boolean,
     heroFocusGridState: VisualFocusGridState?,
@@ -1460,6 +1468,7 @@ private fun DetailsHeroMetrics(
         details.rating?.let { rating ->
             HeroRatingBadge(
                 rating = rating,
+                userRating = userRating,
                 enabled = canRate,
                 heroFocusGridState = heroFocusGridState,
                 onClick = onOpenRatingDialog,

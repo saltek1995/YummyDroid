@@ -371,4 +371,9 @@
     <string name="ui_download_plan_finished_with_cancellations_and_errors">Downloaded %1$d, cancelled %2$d, errors: %3$d</string>
     <string name="ui_offline_filters_unavailable">Some selected filters are unavailable offline and are temporarily ignored.</string>
     <string name="ui_offline_inventory_filters_paused">Showing all downloads; catalog filters are temporarily suspended.</string>
+    <string name="ui_screenshot_position">Screenshot %1$d of %2$d</string>
+    <string name="ui_image_load_failed">Could not load the image</string>
+    <string name="ui_next_title_prompt">Continue in viewing order?</string>
+    <string name="ui_next_title_watch">Watch</string>
+    <string name="ui_next_title_later">Not now</string>
 </resources>

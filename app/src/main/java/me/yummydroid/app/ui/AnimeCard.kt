@@ -5,6 +5,8 @@ import android.content.res.Configuration
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -27,6 +29,7 @@ import androidx.compose.foundation.lazy.grid.LazyGridLayoutInfo
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -56,6 +59,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -318,6 +323,7 @@ private fun AnimeCardHeader(anime: Anime, topEndContent: (@Composable () -> Unit
     ) {
         AnimeCardBadges(
             rating = anime.rating,
+            userRating = anime.userRating,
             views = anime.views,
             modifier = Modifier.weight(1f),
         )
@@ -389,6 +395,7 @@ private fun animeCardInfoHeight(expanded: Boolean): Modifier {
 @Composable
 private fun AnimeCardBadges(
     rating: Double?,
+    userRating: Int?,
     views: Long,
     modifier: Modifier = Modifier,
 ) {
@@ -398,7 +405,7 @@ private fun AnimeCardBadges(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         rating?.let { value ->
-            RatingBadge(rating = value, compact = true)
+            RatingBadge(rating = value, compact = true, userRating = userRating)
         }
 
         if (views > 0) {
@@ -452,17 +459,23 @@ internal fun RatingBadge(
     rating: Double,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
+    userRating: Int? = null,
 ) {
     val ratingText = remember(rating) { formatRating(rating) }
     MetricBadge(
-        icon = Icons.Default.Star,
+        icon = if (userRating != null) Icons.Default.Star else Icons.Outlined.StarOutline,
         text = ratingText,
-        backgroundColor = YummyColors.rating,
-        contentColor = Color(0xFF211200),
+        backgroundColor = if (userRating != null) YummyColors.actionSurfaceSelected else YummyColors.rating,
+        contentColor = if (userRating != null) YummyColors.watched else Color(0xFF211200),
         horizontalPadding = if (compact) YummySpacing.xs else YummySpacing.sm,
-        modifier = modifier,
+        modifier = modifier
+            .then(if (userRating != null) Modifier.border(BorderStroke(1.dp, YummyColors.watched), YummyRadii.smallShape) else Modifier)
+            .semantics { contentDescription = ratingAccessibilityDescription(ratingText, userRating) },
     )
 }
+
+internal fun ratingAccessibilityDescription(ratingText: String, userRating: Int?): String =
+    if (userRating != null) "\u041e\u0431\u0449\u0430\u044f \u043e\u0446\u0435\u043d\u043a\u0430: $ratingText. \u0412\u0430\u0448\u0430 \u043e\u0446\u0435\u043d\u043a\u0430: $userRating" else "\u041e\u0431\u0449\u0430\u044f \u043e\u0446\u0435\u043d\u043a\u0430: $ratingText. \u0412\u044b \u0435\u0449\u0451 \u043d\u0435 \u043e\u0446\u0435\u043d\u0438\u043b\u0438"
 
 @Composable
 internal fun ViewsBadge(

@@ -7,6 +7,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
+import androidx.media3.exoplayer.LoadingInfo
 import androidx.media3.exoplayer.source.CompositeSequenceableLoader
 import androidx.media3.exoplayer.source.CompositeSequenceableLoaderFactory
 import androidx.media3.exoplayer.source.DefaultCompositeSequenceableLoaderFactory
@@ -71,7 +72,7 @@ internal class SubtitleMediaSourceFactory private constructor(
     }
 }
 
-/** Media3's stock composite can retain a zero A/V buffer after fast A/V reaches EOF. */
+/** Optional captions must neither cap the A/V buffer nor starve its next loading request. */
 @androidx.annotation.OptIn(UnstableApi::class)
 internal class AvBufferingLoaderFactory : CompositeSequenceableLoaderFactory {
     private val defaults = DefaultCompositeSequenceableLoaderFactory()
@@ -84,14 +85,39 @@ internal class AvBufferingLoaderFactory : CompositeSequenceableLoaderFactory {
 
     override fun create(loaders: List<SequenceableLoader>, loaderTrackTypes: List<List<Int>>): SequenceableLoader {
         val composite = CompositeSequenceableLoader(loaders, loaderTrackTypes)
-        val avLoaders = loaders.filterIndexed { index, _ ->
-            loaderTrackTypes[index].any { it == C.TRACK_TYPE_AUDIO || it == C.TRACK_TYPE_VIDEO || it == C.TRACK_TYPE_IMAGE }
+        val (avEntries, optionalEntries) = loaders.zip(loaderTrackTypes).partition { (_, types) ->
+            types.any { it == C.TRACK_TYPE_AUDIO || it == C.TRACK_TYPE_VIDEO || it == C.TRACK_TYPE_IMAGE }
         }
-        if (avLoaders.isEmpty()) return composite
+        if (avEntries.isEmpty()) return composite
+        val avLoaders = avEntries.map { it.first }
+        val av = CompositeSequenceableLoader(avLoaders, avEntries.map { it.second })
         return object : SequenceableLoader by composite {
             override fun getBufferedPositionUs(): Long = avLoaders.asSequence()
                 .map { it.bufferedPositionUs }.filter { it != C.TIME_END_OF_SOURCE }
                 .minOrNull() ?: C.TIME_END_OF_SOURCE
+
+            override fun getNextLoadPositionUs(): Long {
+                val mediaNext = av.nextLoadPositionUs
+                if (mediaNext == C.TIME_END_OF_SOURCE) return composite.nextLoadPositionUs
+                // An active caption request must not make LoadControl see a permanent zero buffer.
+                // Dormant sidecars remain visible so track selection can start/continue their loaders.
+                return optionalEntries.asSequence().map { it.first }.filterNot { it.isLoading }
+                    .map { it.nextLoadPositionUs }.filter { it != C.TIME_END_OF_SOURCE }
+                    .fold(mediaNext) { next, optionalNext -> minOf(next, optionalNext) }
+            }
+
+            override fun continueLoading(loadingInfo: LoadingInfo): Boolean {
+                // A waiting text loader at zero must not prevent A/V from loading ahead of playback.
+                val mediaProgress = av.continueLoading(loadingInfo)
+                var optionalProgress = false
+                for ((loader, _) in optionalEntries) {
+                    if (loader.nextLoadPositionUs != C.TIME_END_OF_SOURCE) {
+                        val progressed = loader.continueLoading(loadingInfo)
+                        optionalProgress = optionalProgress || progressed
+                    }
+                }
+                return mediaProgress || optionalProgress
+            }
         }
     }
 }

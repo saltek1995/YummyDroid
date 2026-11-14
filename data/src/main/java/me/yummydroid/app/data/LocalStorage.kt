@@ -128,16 +128,16 @@ private fun ByteArray.toAnimeContentCacheHexString(): String {
 }
 
 // AnimeRatingStateStorage
-class AnimeRatingStateStorage(context: Context) {
-    private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+class AnimeRatingStateStorage internal constructor(private val prefs: SharedPreferences) {
+    constructor(context: Context) : this(context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE))
 
-    fun read(userId: Long): Map<Long, Int> {
+    fun read(userId: Long): Map<Long, Int?> {
         return prefs.getJsonOrNull<StoredAnimeRatings>(key(userId))
             ?.items
             ?.mapNotNull { item ->
                 val animeId = item.animeId.takeIf { it > 0L } ?: return@mapNotNull null
-                val rating = item.rating.takeIf { it in 1..10 } ?: return@mapNotNull null
-                animeId to rating
+                if (item.rating != null && item.rating !in 1..10) return@mapNotNull null
+                animeId to item.rating
             }
             ?.toMap()
             .orEmpty()
@@ -147,8 +147,8 @@ class AnimeRatingStateStorage(context: Context) {
         val items = ratingsByAnime
             .mapNotNull { (animeId, rating) ->
                 if (animeId <= 0L) return@mapNotNull null
-                val normalizedRating = rating?.takeIf { it in 1..10 } ?: return@mapNotNull null
-                StoredAnimeRating(animeId = animeId, rating = normalizedRating)
+                if (rating != null && rating !in 1..10) return@mapNotNull null
+                StoredAnimeRating(animeId = animeId, rating = rating)
             }
             .sortedBy { it.animeId }
         prefs.putJson(key(userId), StoredAnimeRatings(items))
@@ -170,7 +170,7 @@ private data class StoredAnimeRatings(
 @Serializable
 private data class StoredAnimeRating(
     val animeId: Long,
-    val rating: Int,
+    val rating: Int? = null,
 )
 
 // AuthStorage

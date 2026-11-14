@@ -491,9 +491,11 @@ internal fun YummyDroidAppRuntime(
     )
     YummyDroidAppNoticeEffect(core.context, state, actions)
     RegisterYummyDroidAppInputHandler(actions, core.inputState)
+    val cardRatings = rememberAnimeCardRatings(state)
     CompositionLocalProvider(
         LocalImageNetworkPolicy provides if (state.forcedOfflineMode) coil.request.CachePolicy.DISABLED else coil.request.CachePolicy.ENABLED,
         LocalAnimeCardMarks provides state.cardAnimeMarks,
+        LocalAnimeCardRatings provides cardRatings,
         LocalUiLanguage provides state.settings.contentLanguage,
         LocalAppNavigationController provides core.inputState,
     ) {

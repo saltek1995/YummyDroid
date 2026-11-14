@@ -5,8 +5,6 @@ import android.content.res.Configuration
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -323,7 +321,7 @@ private fun AnimeCardHeader(anime: Anime, topEndContent: (@Composable () -> Unit
     ) {
         AnimeCardBadges(
             rating = anime.rating,
-            userRating = anime.userRating,
+            userRating = animeCardUserRating(anime, LocalAnimeCardRatings.current),
             views = anime.views,
             modifier = Modifier.weight(1f),
         )
@@ -404,8 +402,8 @@ private fun AnimeCardBadges(
         horizontalArrangement = Arrangement.spacedBy(YummySpacing.xs),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        rating?.let { value ->
-            RatingBadge(rating = value, compact = true, userRating = userRating)
+        if (rating != null || userRating != null) {
+            RatingBadge(rating = rating, compact = true, userRating = userRating)
         }
 
         if (views > 0) {
@@ -456,26 +454,29 @@ private suspend fun AwaitPointerEventScope.awaitAnimeCardTouchEnd(initialPointer
 // AnimeMetricBadges
 @Composable
 internal fun RatingBadge(
-    rating: Double,
+    rating: Double?,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
     userRating: Int? = null,
 ) {
-    val ratingText = remember(rating) { formatRating(rating) }
+    val ratingText = remember(rating) { rating?.let(::formatRating) }
     MetricBadge(
         icon = if (userRating != null) Icons.Default.Star else Icons.Outlined.StarOutline,
         text = ratingText,
-        backgroundColor = if (userRating != null) YummyColors.actionSurfaceSelected else YummyColors.rating,
-        contentColor = if (userRating != null) YummyColors.watched else Color(0xFF211200),
+        backgroundColor = YummyColors.rating,
+        contentColor = Color(0xFF211200),
+        iconColor = if (userRating != null) Color.Black else Color(0xFF211200),
         horizontalPadding = if (compact) YummySpacing.xs else YummySpacing.sm,
         modifier = modifier
-            .then(if (userRating != null) Modifier.border(BorderStroke(1.dp, YummyColors.watched), YummyRadii.smallShape) else Modifier)
             .semantics { contentDescription = ratingAccessibilityDescription(ratingText, userRating) },
     )
 }
 
-internal fun ratingAccessibilityDescription(ratingText: String, userRating: Int?): String =
-    if (userRating != null) "\u041e\u0431\u0449\u0430\u044f \u043e\u0446\u0435\u043d\u043a\u0430: $ratingText. \u0412\u0430\u0448\u0430 \u043e\u0446\u0435\u043d\u043a\u0430: $userRating" else "\u041e\u0431\u0449\u0430\u044f \u043e\u0446\u0435\u043d\u043a\u0430: $ratingText. \u0412\u044b \u0435\u0449\u0451 \u043d\u0435 \u043e\u0446\u0435\u043d\u0438\u043b\u0438"
+internal fun ratingAccessibilityDescription(ratingText: String?, userRating: Int?): String =
+    listOfNotNull(
+        ratingText?.let { "Общая оценка: $it" },
+        userRating?.let { "Ваша оценка: $it" } ?: "Вы ещё не оценили",
+    ).joinToString(". ")
 
 @Composable
 internal fun ViewsBadge(
@@ -496,11 +497,12 @@ internal fun ViewsBadge(
 @Composable
 private fun MetricBadge(
     icon: ImageVector,
-    text: String,
+    text: String?,
     backgroundColor: Color,
     contentColor: Color,
     modifier: Modifier = Modifier,
     horizontalPadding: Dp = YummySpacing.sm,
+    iconColor: Color = contentColor,
 ) {
     Row(
         modifier = modifier
@@ -514,16 +516,18 @@ private fun MetricBadge(
             icon,
             contentDescription = null,
             modifier = Modifier.size(YummySizes.badgeIcon),
-            tint = contentColor,
+            tint = iconColor,
         )
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-            color = contentColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        if (text != null) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = contentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 

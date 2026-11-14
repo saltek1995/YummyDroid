@@ -8,6 +8,7 @@ import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,6 +64,51 @@ class GuiAuditRenderTest {
     @Test fun phone_settings() = dialog(DialogScene.Settings)
     @Test fun phone_search() = dialog(DialogScene.Search)
     @Test fun phone_next_title() = dialog(DialogScene.NextTitle)
+
+    @Test fun phone_rating_styles() {
+        compose.setContent {
+            YummyDroidTheme {
+                androidx.compose.material3.Surface(Modifier.requiredSize(360.dp, 800.dp)) {
+                    androidx.compose.foundation.layout.Column(
+                        Modifier.padding(20.dp),
+                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(20.dp),
+                    ) {
+                        androidx.compose.material3.Text("Без оценки / Оценено")
+                        androidx.compose.foundation.layout.Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(24.dp)) {
+                            RatingBadge(6.4)
+                            RatingBadge(6.4, userRating = 8)
+                        }
+                        for (rating in listOf(4.8, 6.4, 8.2)) {
+                            androidx.compose.foundation.layout.Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(24.dp)) {
+                                HeroRatingBadge(rating, enabled = false, onClick = {}, heroFocusGridState = null)
+                                HeroRatingBadge(rating, userRating = 8, enabled = false, onClick = {}, heroFocusGridState = null)
+                            }
+                        }
+                        androidx.compose.material3.Text("Без общей оценки")
+                        RatingBadge(null, userRating = 8)
+                    }
+                }
+            }
+        }
+        compose.waitForIdle()
+        capture("phone-rating-styles", 360, 800, setOf("Ваша оценка: 8"))
+    }
+
+    @Test fun phone_history_rated() = phone("phone-history-rated", catalog().copy(
+        homeSection = BrowseSection.History, historyAnime = LoadState.Ready(listOf(anime(1))),
+        auth = me.yummydroid.app.AuthUiState(profile = me.yummydroid.app.data.UserProfile(1, "Fixture", "")),
+        cardAnimeMarksReady = true, cardAnimeRatings = mapOf(1L to 8),
+    ), "Ваша оценка: 8")
+
+    @Test fun phone_schedule_rated_without_general_score() = phone("phone-schedule-rated", catalog().copy(
+        homeSection = BrowseSection.Schedule,
+        schedule = LoadState.Ready(listOf(me.yummydroid.app.data.ScheduleAnime(
+            anime(1).copy(rating = null), 3, 12,
+            java.time.Instant.now().epochSecond - 60L, java.time.Instant.now().epochSecond + 3600L,
+        ))),
+        auth = me.yummydroid.app.AuthUiState(profile = me.yummydroid.app.data.UserProfile(1, "Fixture", "")),
+        cardAnimeMarksReady = true, cardAnimeRatings = mapOf(1L to 8),
+    ), "Ваша оценка: 8")
 
     @Test fun phone_episode_grid_large_title() {
         val videos = (1..1181).map(::video)

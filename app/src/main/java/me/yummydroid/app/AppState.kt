@@ -45,7 +45,10 @@ internal fun YummyDroidUiState.withContentContextTransition(previous: YummyDroid
     if (contentContext() == previous.contentContext()) return this
     val accountState = if (auth.profile?.id != previous.auth.profile?.id ||
         contentSessionRevision != previous.contentSessionRevision
-    ) copy(cardAnimeMarks = emptyMap(), cardAnimeMarksReady = false) else this
+    ) copy(
+        cardAnimeMarks = emptyMap(), cardAnimeMarksReady = false, cardAnimeRatings = emptyMap(),
+        historyAnime = historyAnime.withoutCardUserRatings(), historyBrowseResult = null,
+    ) else this
     val invalidated = if (detailsContentContext == contentContext()) accountState else accountState.copy(
         detailsContentContext = null,
         details = LoadState.Loading,
@@ -534,6 +537,7 @@ data class YummyDroidUiState(
     val animeMark: LoadState<UserAnimeMark?> = LoadState.Ready(null),
     val cardAnimeMarks: Map<Long, UserAnimeMark> = emptyMap(),
     val cardAnimeMarksReady: Boolean = false,
+    val cardAnimeRatings: Map<Long, Int?> = emptyMap(),
     val localWatchHistoryMergePrompt: LocalWatchHistoryMergePrompt? = null,
     val settings: AppSettings = AppSettings(),
     val playbackProgress: PlaybackProgress? = null,

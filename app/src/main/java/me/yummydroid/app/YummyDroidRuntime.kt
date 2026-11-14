@@ -458,6 +458,9 @@ internal class YummyDroidRuntime(
     )
 
     init {
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            observeAnimeCardRatings(_uiState, animeRatingCoordinator.cardRatings, updateUiState)
+        }
         scope.launch {
             observeAnimeCardMarks(_uiState, animeCardMarksCoordinator)
         }

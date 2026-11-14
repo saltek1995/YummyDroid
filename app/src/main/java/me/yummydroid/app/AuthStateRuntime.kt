@@ -173,6 +173,8 @@ internal class AuthStateRuntime(
         authOperations.launchLatest(scope) { lease ->
             val cachedProfile = withContext(Dispatchers.IO) { repository.cachedProfile() }
             if (!lease.isCurrent) return@launchLatest
+            animeRatingCoordinator.restore(cachedProfile?.id)
+            if (!lease.isCurrent) return@launchLatest
             val previousContext = currentState().contentContext()
             updateState { it.copy(auth = AuthUiState(profile = cachedProfile, loading = true)) }
             ensureRestoredVisibleContent(previousContext)
@@ -218,7 +220,7 @@ internal class AuthStateRuntime(
             )
         }
         ensureRestoredVisibleContent(previousContext)
-        animeRatingCoordinator.restore(profile?.id)
+        if (profile?.id != cachedProfile?.id) animeRatingCoordinator.restore(profile?.id)
         if (profile == null) {
             videoSubscriptionStateCoordinator.synchronize()
             playbackHistoryStateRuntime.clearProfileState()

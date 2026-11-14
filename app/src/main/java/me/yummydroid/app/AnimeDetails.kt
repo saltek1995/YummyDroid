@@ -10,6 +10,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import me.yummydroid.app.data.Anime
 import me.yummydroid.app.data.RepositoryContent
@@ -623,7 +625,7 @@ internal data class AnimeRatingUpdate(
 )
 
 internal class AnimeRatingCoordinator(
-    private val readRatings: (Long) -> Map<Long, Int>,
+    private val readRatings: (Long) -> Map<Long, Int?>,
     private val saveRatings: (Long, Map<Long, Int?>) -> Unit,
     private val setRating: suspend (Long, Int) -> AnimeRatingSummary,
     private val deleteRating: suspend (Long) -> AnimeRatingSummary,
@@ -638,6 +640,8 @@ internal class AnimeRatingCoordinator(
     private var activeUserId: Long? = null
     private var accountGeneration = 0L
     private var mutationSequence = 0L
+    private val mutableCardRatings = MutableStateFlow(AnimeCardRatingsSnapshot())
+    val cardRatings = mutableCardRatings.asStateFlow()
 
     fun hasPendingMutation(animeId: Long): Boolean = pendingRatings.values.any { it.animeId == animeId }
 
@@ -650,6 +654,7 @@ internal class AnimeRatingCoordinator(
         latestMutationIds.clear()
         val validUserId = userId?.takeIf { it > 0L }
         activeUserId = validUserId
+        publishCardRatings()
         if (validUserId == null) return
 
         val restored = try {
@@ -661,6 +666,7 @@ internal class AnimeRatingCoordinator(
         if (generation != accountGeneration || activeUserId != validUserId) return
         knownRatings.putAll(restored)
         confirmedRatings.putAll(restored)
+        publishCardRatings()
     }
 
     fun clear() {
@@ -671,6 +677,7 @@ internal class AnimeRatingCoordinator(
         confirmedRatingMutationIds.clear()
         pendingRatings.clear()
         latestMutationIds.clear()
+        publishCardRatings()
     }
 
     suspend fun effectiveRating(
@@ -682,13 +689,15 @@ internal class AnimeRatingCoordinator(
         if (!trustRemote) return if (activeUserId != null) knownRatings[animeId] else null
 
         if (pendingRatings.values.any { it.animeId == animeId }) return knownRatings[animeId]
+        val confirmedChanged = !confirmedRatings.containsKey(animeId) || confirmedRatings[animeId] != normalized
         confirmedRatings[animeId] = normalized
         val changed = if (normalized != null) {
             knownRatings.put(animeId, normalized) != normalized
         } else {
             knownRatings.remove(animeId) != null
         }
-        if (changed) persistBestEffort()
+        publishCardRatings()
+        if (changed || confirmedChanged) persistBestEffort()
         return normalized
     }
 
@@ -708,6 +717,7 @@ internal class AnimeRatingCoordinator(
         }
         pendingRatings[mutationId] = staged
         knownRatings[animeId] = staged.optimisticRating
+        publishCardRatings()
         return staged
     }
 
@@ -772,6 +782,11 @@ internal class AnimeRatingCoordinator(
         if (pending != null) knownRatings[animeId] = pending.optimisticRating
         else if (confirmedRatings.containsKey(animeId)) knownRatings[animeId] = confirmedRatings[animeId]
         else knownRatings.remove(animeId)
+        publishCardRatings()
+    }
+
+    private fun publishCardRatings() {
+        mutableCardRatings.value = AnimeCardRatingsSnapshot(activeUserId, confirmedRatings + knownRatings)
     }
 
     internal fun snapshot(): Map<Long, Int?> = knownRatings.toMap()

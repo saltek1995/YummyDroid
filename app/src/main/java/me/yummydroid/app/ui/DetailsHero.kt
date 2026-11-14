@@ -1263,7 +1263,7 @@ internal fun HeroRatingBadge(
     heroFocusGridState: VisualFocusGridState?,
 ) {
     val shape = RoundedCornerShape(8.dp)
-    val ratingColor = if (userRating != null) YummyColors.watched else ratingColorForSiteScale(rating)
+    val ratingColor = ratingColorForSiteScale(rating)
     val textStyle = MaterialTheme.typography.headlineSmall.withoutFontPadding()
     val focusModifier = if (enabled && heroFocusGridState != null) {
         Modifier.visualFocusGridItem(
@@ -1283,16 +1283,20 @@ internal fun HeroRatingBadge(
             .semantics { contentDescription = ratingAccessibilityDescription(formatRating(rating), userRating) }
             .then(if (enabled) Modifier.dpadClickable(shape, onClick) else Modifier),
         shape = shape,
-        color = if (userRating != null) ratingColor.copy(alpha = .15f) else Color.Transparent,
-        border = if (userRating != null) BorderStroke(1.dp, ratingColor) else null,
+        color = Color.Transparent,
         contentColor = ratingColor,
     ) {
         Row(
-            modifier = Modifier.height(36.dp).padding(horizontal = if (userRating != null) 6.dp else 0.dp),
+            modifier = Modifier.height(36.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(5.dp),
         ) {
-            Icon(if (userRating != null) Icons.Default.Star else Icons.Outlined.StarOutline, contentDescription = null, modifier = Modifier.size(25.dp))
+            Icon(
+                if (userRating != null) Icons.Default.Star else Icons.Outlined.StarOutline,
+                contentDescription = null,
+                modifier = Modifier.size(25.dp),
+                tint = ratingColor,
+            )
             Text(
                 text = formatRating(rating),
                 style = textStyle,
@@ -1423,7 +1427,13 @@ internal fun DetailsHeroRatingAndStats(
     LaunchedEffect(interactive) {
         if (!interactive) ratingDialogOpen = false
     }
-    val ratingSummary = (detailsExtras as? LoadState.Ready)?.data?.rating
+    val payloadSummary = (detailsExtras as? LoadState.Ready)?.data?.rating
+    val userRating = animeCardUserRating(
+        details.id,
+        if (payloadSummary != null) payloadSummary.userRating else details.userRating,
+        LocalAnimeCardRatings.current,
+    )
+    val ratingSummary = payloadSummary?.let { if (it.userRating == userRating) it else it.copy(userRating = userRating) }
     val canRate = showHeroRating && auth.profile != null && ratingSummary != null
     DetailsHeroRatingDialogInputEffect(
         open = interactive && ratingDialogOpen,
@@ -1432,7 +1442,7 @@ internal fun DetailsHeroRatingAndStats(
     )
     DetailsHeroMetrics(
         details = details,
-        userRating = if (ratingSummary != null) ratingSummary.userRating else details.userRating,
+        userRating = userRating,
         canRate = canRate,
         compact = compact,
         heroFocusGridState = heroFocusGridState,
